@@ -2898,52 +2898,25 @@ ctx.save();
     let d = (b - a + Math.PI*3)%(Math.PI*2) - Math.PI;
     return a + d*t;
   }
-  function evenlySpaceSnakePoints(pts, spacing){
-    if (!pts || pts.length < 3) return pts;
-    const step = Math.max(2.5, spacing || 7);
+  function relaxSnakeSpacing(pts, spacing){
+    if (!pts || pts.length < 3) return;
+    const target = Math.max(3.5, spacing || 7);
+    const k = 0.35; // gentle correction so motion stays stable
 
-    const out = [pts[0]];
-    let prev = pts[0];
-    let carry = 0;
+    for (let i=1; i<pts.length; i++){
+      const p0 = pts[i-1], p1 = pts[i];
+      if (!p0 || !p1) continue;
+      let dx = p1[0] - p0[0], dy = p1[1] - p0[1];
+      const d = Math.hypot(dx, dy);
+      if (d < 1e-6) continue;
 
-    for (let i=1; i<pts.length && out.length < pts.length; i++){
-      let cur = pts[i];
-      if (!cur) continue;
-
-      let x0 = prev[0], y0 = prev[1];
-      const x1 = cur[0], y1 = cur[1];
-      let dx = x1 - x0, dy = y1 - y0;
-      let seg = Math.hypot(dx, dy);
-      if (seg < 1e-6){
-        prev = cur;
-        continue;
-      }
-
-      while (carry + seg >= step && out.length < pts.length){
-        const need = step - carry;
-        const t = need / seg;
-        x0 += dx * t;
-        y0 += dy * t;
-        out.push([x0, y0]);
-
-        dx = x1 - x0;
-        dy = y1 - y0;
-        seg = Math.hypot(dx, dy);
-        carry = 0;
-        if (seg < 1e-6) break;
-      }
-
-      carry += seg;
-      prev = cur;
+      const err = d - target;
+      const adj = err * k;
+      p1[0] -= (dx / d) * adj;
+      p1[1] -= (dy / d) * adj;
     }
-
-    while (out.length < pts.length){
-      const last = out[out.length - 1] || pts[pts.length - 1];
-      out.push([last[0], last[1]]);
-    }
-
-    return out;
   }
+
 
   
   // ----- Local direct-render sync (removes snap-message jitter in offline mode) -----
@@ -3133,7 +3106,7 @@ function frame(t){
           }
 
           const segSpace = Math.max(4.4, (s.bw || 22) * 0.28);
-          s.pts = evenlySpaceSnakePoints(s.pts, segSpace);
+          relaxSnakeSpacing(s.pts, segSpace);
           s.pts[0][0] = s.x;
           s.pts[0][1] = s.y;
         }
@@ -3195,7 +3168,7 @@ function frame(t){
           }
 
           const segSpace = Math.max(4.4, (s.bw || 22) * 0.28);
-          s.pts = evenlySpaceSnakePoints(s.pts, segSpace);
+          relaxSnakeSpacing(s.pts, segSpace);
           s.pts[0][0] = s.x;
           s.pts[0][1] = s.y;
         }
