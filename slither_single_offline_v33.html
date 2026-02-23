@@ -2927,14 +2927,19 @@ ctx.save();
 
       let r = rSnakes.get(s.id);
       if (!r){
-        r = { id:s.id, name:s.name, bot:s.bot, x:s.x, y:s.y, a:s.a, pts:s.pts, c:s.c, len:s.len, bw:s.bw, hr:s.hr };
+        r = {
+          id:s.id, name:s.name, bot:s.bot,
+          x:s.x, y:s.y, a:s.a, pts:(s.pts||[]).map(p => [p[0], p[1]]),
+          tx:s.x, ty:s.y, ta:s.a, tpts:s.pts||[],
+          c:s.c, len:s.len, bw:s.bw, hr:s.hr
+        };
         rSnakes.set(s.id, r);
       } else {
         r.id = s.id;
         r.name = s.name;
         r.bot = s.bot;
-        r.x = s.x; r.y = s.y; r.a = s.a;
-        r.pts = s.pts;
+        r.tx = s.x; r.ty = s.y; r.ta = s.a;
+        r.tpts = s.pts || r.tpts;
         r.c = s.c;
         r.len = s.len;
         r.bw = s.bw;
@@ -2957,6 +2962,7 @@ ctx.save();
   
   let localAcc = 0;
   const LOCAL_STEP = 1/120;
+  let lastInputAngle = null;
 // v15 hotfix: ensure suck animation renderer exists in global scope
   if (typeof drawSuckers !== "function") {
     function drawSuckers(camX, camY, camZ, t){
@@ -3007,9 +3013,16 @@ function frame(t){
     lastFrame = t;
     // send input (before sim tick in local mode for tight control)
     if (ws && ws.readyState === WebSocket.OPEN && joined && !isTyping()){
-      const a = computeInputAngle();
-      if (a != null) wsSend({ t:"input", a, b: boostKey });
-      else wsSend({ t:"input", a: (myId && rSnakes.get(myId) ? rSnakes.get(myId).a : 0), b: boostKey });
+      const rawA = computeInputAngle();
+      if (rawA != null){
+        const blend = 1 - Math.exp(-dt * 22);
+        const a = (lastInputAngle == null) ? rawA : lerpAngle(lastInputAngle, rawA, blend);
+        lastInputAngle = a;
+        wsSend({ t:"input", a, b: boostKey });
+      } else {
+        lastInputAngle = null;
+        wsSend({ t:"input", a: (myId && rSnakes.get(myId) ? rSnakes.get(myId).a : 0), b: boostKey });
+      }
     }
 
 
@@ -3030,8 +3043,31 @@ function frame(t){
     const isLocalDirect = !!(isLocalMode && ws && ws._server && ws._server.__direct);
 
     if (isLocalDirect){
-      // In direct offline mode, we sync render state straight from the local server (no snap messages -> no jitter)
+      // In direct offline mode, sync server state, then smooth towards it for buttery movement.
       syncLocalFromServer(t);
+
+      const smooth = 1 - Math.exp(-dt * 28);
+      for (const s of rSnakes.values()){
+        s.x = lerp(s.x, s.tx, smooth);
+        s.y = lerp(s.y, s.ty, smooth);
+        s.a = lerpAngle(s.a, s.ta, smooth);
+
+        const tp = s.tpts || [];
+        if (!s.pts || s.pts.length !== tp.length){
+          s.pts = tp.map(p => [p[0], p[1]]);
+        } else {
+          for (let i=0;i<tp.length;i++){
+            if (!s.pts[i]){ s.pts[i] = [tp[i][0], tp[i][1]]; continue; }
+            s.pts[i][0] = lerp(s.pts[i][0], tp[i][0], smooth);
+            s.pts[i][1] = lerp(s.pts[i][1], tp[i][1], smooth);
+          }
+        }
+
+        if (s.pts && s.pts.length){
+          s.pts[0][0] = s.x;
+          s.pts[0][1] = s.y;
+        }
+      }
     } else {
       // smoothing factor (online mode only)
       const smooth = isLocalMode ? 1 : (1 - Math.exp(-dt * 14));
