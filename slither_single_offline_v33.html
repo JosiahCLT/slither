@@ -1750,7 +1750,7 @@ const take = (hits.length > maxEat) ? hits.slice(0, maxEat) : hits;
             if (!this.foods.has(id)) continue;
             const ft = take[j].t;
             const __f = this.removeFood(id);
-            if (__f && this.__direct && this._eatEv) this._eatEv.push({ x: __f.x, y: __f.y, r: (__f.r||6), c: (__f.c||"rgba(106,167,255,.95)"), t: __f.t||"n" });
+            if (__f && this.__direct && this._eatEv) this._eatEv.push({ x: __f.x, y: __f.y, r: (__f.r||6), c: (__f.c||"rgba(106,167,255,.95)"), t: __f.t||"n", eaterId: s.id });
             eat.push(id);
             s.len += this.foodValue(ft);
           }
@@ -2898,6 +2898,52 @@ ctx.save();
     let d = (b - a + Math.PI*3)%(Math.PI*2) - Math.PI;
     return a + d*t;
   }
+  function evenlySpaceSnakePoints(pts, spacing){
+    if (!pts || pts.length < 3) return pts;
+    const step = Math.max(2.5, spacing || 7);
+
+    const out = [pts[0]];
+    let prev = pts[0];
+    let carry = 0;
+
+    for (let i=1; i<pts.length && out.length < pts.length; i++){
+      let cur = pts[i];
+      if (!cur) continue;
+
+      let x0 = prev[0], y0 = prev[1];
+      const x1 = cur[0], y1 = cur[1];
+      let dx = x1 - x0, dy = y1 - y0;
+      let seg = Math.hypot(dx, dy);
+      if (seg < 1e-6){
+        prev = cur;
+        continue;
+      }
+
+      while (carry + seg >= step && out.length < pts.length){
+        const need = step - carry;
+        const t = need / seg;
+        x0 += dx * t;
+        y0 += dy * t;
+        out.push([x0, y0]);
+
+        dx = x1 - x0;
+        dy = y1 - y0;
+        seg = Math.hypot(dx, dy);
+        carry = 0;
+        if (seg < 1e-6) break;
+      }
+
+      carry += seg;
+      prev = cur;
+    }
+
+    while (out.length < pts.length){
+      const last = out[out.length - 1] || pts[pts.length - 1];
+      out.push([last[0], last[1]]);
+    }
+
+    return out;
+  }
 
   
   // ----- Local direct-render sync (removes snap-message jitter in offline mode) -----
@@ -2911,6 +2957,13 @@ ctx.save();
       for (let i=0;i<srv._eatEv.length;i++){
         const f = srv._eatEv[i];
         if (!f) continue;
+        // local direct mode only renders suck animation for your own eats nearby
+        if (myId == null || f.eaterId !== myId) continue;
+        const me = rSnakes.get(myId);
+        if (!me) continue;
+        const dx = f.x - me.x, dy = f.y - me.y;
+        if ((dx*dx + dy*dy) > (420*420)) continue;
+
         // stronger suck visuals for bigger orbs
         const rr = (f.r || 6) * ((f.t === "k" || f.t === "g" || f.t === "b") ? 1.4 : 1.0);
         suckers.push({ sx: f.x, sy: f.y, r: rr, c: (f.c || "rgba(106,167,255,.95)"), t0: now, dur: 260 });
@@ -2927,14 +2980,19 @@ ctx.save();
 
       let r = rSnakes.get(s.id);
       if (!r){
-        r = { id:s.id, name:s.name, bot:s.bot, x:s.x, y:s.y, a:s.a, pts:s.pts, c:s.c, len:s.len, bw:s.bw, hr:s.hr };
+        r = {
+          id:s.id, name:s.name, bot:s.bot,
+          x:s.x, y:s.y, a:s.a, pts:(s.pts||[]).map(p => [p[0], p[1]]),
+          tx:s.x, ty:s.y, ta:s.a, tpts:s.pts||[],
+          c:s.c, len:s.len, bw:s.bw, hr:s.hr
+        };
         rSnakes.set(s.id, r);
       } else {
         r.id = s.id;
         r.name = s.name;
         r.bot = s.bot;
-        r.x = s.x; r.y = s.y; r.a = s.a;
-        r.pts = s.pts;
+        r.tx = s.x; r.ty = s.y; r.ta = s.a;
+        r.tpts = s.pts || r.tpts;
         r.c = s.c;
         r.len = s.len;
         r.bw = s.bw;
@@ -2957,6 +3015,7 @@ ctx.save();
   
   let localAcc = 0;
   const LOCAL_STEP = 1/120;
+  let lastInputAngle = null;
 // v15 hotfix: ensure suck animation renderer exists in global scope
   if (typeof drawSuckers !== "function") {
     function drawSuckers(camX, camY, camZ, t){
@@ -3007,9 +3066,16 @@ function frame(t){
     lastFrame = t;
     // send input (before sim tick in local mode for tight control)
     if (ws && ws.readyState === WebSocket.OPEN && joined && !isTyping()){
-      const a = computeInputAngle();
-      if (a != null) wsSend({ t:"input", a, b: boostKey });
-      else wsSend({ t:"input", a: (myId && rSnakes.get(myId) ? rSnakes.get(myId).a : 0), b: boostKey });
+      const rawA = computeInputAngle();
+      if (rawA != null){
+        const blend = 1 - Math.exp(-dt * 22);
+        const a = (lastInputAngle == null) ? rawA : lerpAngle(lastInputAngle, rawA, blend);
+        lastInputAngle = a;
+        wsSend({ t:"input", a, b: boostKey });
+      } else {
+        lastInputAngle = null;
+        wsSend({ t:"input", a: (myId && rSnakes.get(myId) ? rSnakes.get(myId).a : 0), b: boostKey });
+      }
     }
 
 
@@ -3030,8 +3096,48 @@ function frame(t){
     const isLocalDirect = !!(isLocalMode && ws && ws._server && ws._server.__direct);
 
     if (isLocalDirect){
-      // In direct offline mode, we sync render state straight from the local server (no snap messages -> no jitter)
+      // In direct offline mode, sync server state, then smooth towards it for buttery movement.
       syncLocalFromServer(t);
+
+      const smooth = 1 - Math.exp(-dt * 28);
+      for (const s of rSnakes.values()){
+        s.x = lerp(s.x, s.tx, smooth);
+        s.y = lerp(s.y, s.ty, smooth);
+        s.a = lerpAngle(s.a, s.ta, smooth);
+
+        const tp = s.tpts || [];
+        if (!s.pts || s.pts.length !== tp.length){
+          s.pts = tp.map(p => [p[0], p[1]]);
+        } else {
+          for (let i=0;i<tp.length;i++){
+            if (!s.pts[i]){ s.pts[i] = [tp[i][0], tp[i][1]]; continue; }
+            s.pts[i][0] = lerp(s.pts[i][0], tp[i][0], smooth);
+            s.pts[i][1] = lerp(s.pts[i][1], tp[i][1], smooth);
+          }
+        }
+
+        if (s.pts && s.pts.length){
+          s.pts[0][0] = s.x;
+          s.pts[0][1] = s.y;
+
+          const fxh = Math.cos(s.a), fyh = Math.sin(s.a);
+          const lim = Math.min(14, s.pts.length);
+          for (let i=1;i<lim;i++){
+            const p = s.pts[i];
+            const dxh = p[0] - s.x, dyh = p[1] - s.y;
+            const dotH = dxh*fxh + dyh*fyh;
+            if (dotH > 0){
+              p[0] -= fxh * (dotH + 0.01);
+              p[1] -= fyh * (dotH + 0.01);
+            }
+          }
+
+          const segSpace = Math.max(4.4, (s.bw || 22) * 0.28);
+          s.pts = evenlySpaceSnakePoints(s.pts, segSpace);
+          s.pts[0][0] = s.x;
+          s.pts[0][1] = s.y;
+        }
+      }
     } else {
       // smoothing factor (online mode only)
       const smooth = isLocalMode ? 1 : (1 - Math.exp(-dt * 14));
@@ -3087,6 +3193,11 @@ function frame(t){
               p[1] -= fyh * (dotH + 0.01);
             }
           }
+
+          const segSpace = Math.max(4.4, (s.bw || 22) * 0.28);
+          s.pts = evenlySpaceSnakePoints(s.pts, segSpace);
+          s.pts[0][0] = s.x;
+          s.pts[0][1] = s.y;
         }
       }
     }
