@@ -2898,25 +2898,6 @@ ctx.save();
     let d = (b - a + Math.PI*3)%(Math.PI*2) - Math.PI;
     return a + d*t;
   }
-  function relaxSnakeSpacing(pts, spacing){
-    if (!pts || pts.length < 3) return;
-    const target = Math.max(3.5, spacing || 7);
-    const k = 0.35; // gentle correction so motion stays stable
-
-    for (let i=1; i<pts.length; i++){
-      const p0 = pts[i-1], p1 = pts[i];
-      if (!p0 || !p1) continue;
-      let dx = p1[0] - p0[0], dy = p1[1] - p0[1];
-      const d = Math.hypot(dx, dy);
-      if (d < 1e-6) continue;
-
-      const err = d - target;
-      const adj = err * k;
-      p1[0] -= (dx / d) * adj;
-      p1[1] -= (dy / d) * adj;
-    }
-  }
-
 
   
   // ----- Local direct-render sync (removes snap-message jitter in offline mode) -----
@@ -3092,23 +3073,6 @@ function frame(t){
         if (s.pts && s.pts.length){
           s.pts[0][0] = s.x;
           s.pts[0][1] = s.y;
-
-          const fxh = Math.cos(s.a), fyh = Math.sin(s.a);
-          const lim = Math.min(14, s.pts.length);
-          for (let i=1;i<lim;i++){
-            const p = s.pts[i];
-            const dxh = p[0] - s.x, dyh = p[1] - s.y;
-            const dotH = dxh*fxh + dyh*fyh;
-            if (dotH > 0){
-              p[0] -= fxh * (dotH + 0.01);
-              p[1] -= fyh * (dotH + 0.01);
-            }
-          }
-
-          const segSpace = Math.max(4.4, (s.bw || 22) * 0.28);
-          relaxSnakeSpacing(s.pts, segSpace);
-          s.pts[0][0] = s.x;
-          s.pts[0][1] = s.y;
         }
       }
     } else {
@@ -3151,24 +3115,6 @@ function frame(t){
 
         // keep body anchored to the rendered head (prevents stepping/jitter)
         if (s.pts && s.pts.length){
-          s.pts[0][0] = s.x;
-          s.pts[0][1] = s.y;
-
-          // hard clamp: never allow early body points to sit in front of the head
-          const fxh = Math.cos(s.a), fyh = Math.sin(s.a);
-          const lim = Math.min(14, s.pts.length);
-          for (let i=1;i<lim;i++){
-            const p = s.pts[i];
-            const dxh = p[0] - s.x, dyh = p[1] - s.y;
-            const dotH = dxh*fxh + dyh*fyh;
-            if (dotH > 0){
-              p[0] -= fxh * (dotH + 0.01);
-              p[1] -= fyh * (dotH + 0.01);
-            }
-          }
-
-          const segSpace = Math.max(4.4, (s.bw || 22) * 0.28);
-          relaxSnakeSpacing(s.pts, segSpace);
           s.pts[0][0] = s.x;
           s.pts[0][1] = s.y;
         }
