@@ -3022,8 +3022,13 @@ function frame(t){
     if (ws && ws.readyState === WebSocket.OPEN && joined && !isTyping()){
       const rawA = computeInputAngle();
       if (rawA != null){
-        const blend = 1 - Math.exp(-dt * 22);
-        const a = (lastInputAngle == null) ? rawA : lerpAngle(lastInputAngle, rawA, blend);
+        // local direct mode should feel immediate; only smooth online input to hide packet jitter
+        const isLocalInput = (ws && ws.__mode === "local");
+        const a = isLocalInput
+          ? rawA
+          : ((lastInputAngle == null)
+              ? rawA
+              : lerpAngle(lastInputAngle, rawA, 1 - Math.exp(-dt * 22)));
         lastInputAngle = a;
         wsSend({ t:"input", a, b: boostKey });
       } else {
@@ -3050,14 +3055,14 @@ function frame(t){
     const isLocalDirect = !!(isLocalMode && ws && ws._server && ws._server.__direct);
 
     if (isLocalDirect){
-      // In direct offline mode, sync server state, then smooth towards it for buttery movement.
+      // Local direct mode already runs a 120Hz fixed-step simulation in-process.
+      // Render the latest authoritative state directly to avoid extra client-side lag/wobble.
       syncLocalFromServer(t);
 
-      const smooth = 1 - Math.exp(-dt * 28);
       for (const s of rSnakes.values()){
-        s.x = lerp(s.x, s.tx, smooth);
-        s.y = lerp(s.y, s.ty, smooth);
-        s.a = lerpAngle(s.a, s.ta, smooth);
+        s.x = s.tx;
+        s.y = s.ty;
+        s.a = s.ta;
 
         const tp = s.tpts || [];
         if (!s.pts || s.pts.length !== tp.length){
@@ -3065,8 +3070,8 @@ function frame(t){
         } else {
           for (let i=0;i<tp.length;i++){
             if (!s.pts[i]){ s.pts[i] = [tp[i][0], tp[i][1]]; continue; }
-            s.pts[i][0] = lerp(s.pts[i][0], tp[i][0], smooth);
-            s.pts[i][1] = lerp(s.pts[i][1], tp[i][1], smooth);
+            s.pts[i][0] = tp[i][0];
+            s.pts[i][1] = tp[i][1];
           }
         }
 
