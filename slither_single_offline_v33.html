@@ -2902,7 +2902,7 @@ ctx.save();
   
   // ----- Local direct-render sync (removes snap-message jitter in offline mode) -----
   const __seenLocal = new Set();
-  function syncLocalFromServer(now){
+  function syncLocalFromServer(now, interpSnakes){
     if (!ws || ws.__mode !== "local" || !ws._server) return;
     const srv = ws._server;
 
@@ -2928,29 +2928,31 @@ ctx.save();
     __seenLocal.clear();
     let humans = 0;
 
-    for (const s of srv.snakes.values()){
+    const sourceSnakes = interpSnakes || srv.snakes;
+    for (const s of sourceSnakes.values()){
       __seenLocal.add(s.id);
-      if (!s.bot) humans++;
+      const live = srv.snakes.get(s.id) || s;
+      if (!live.bot) humans++;
 
       let r = rSnakes.get(s.id);
       if (!r){
         r = {
-          id:s.id, name:s.name, bot:s.bot,
+          id:s.id, name:live.name, bot:live.bot,
           x:s.x, y:s.y, a:s.a, pts:(s.pts||[]).map(p => [p[0], p[1]]),
           tx:s.x, ty:s.y, ta:s.a, tpts:s.pts||[],
-          c:s.c, len:s.len, bw:s.bw, hr:s.hr
+          c:live.c, len:live.len, bw:live.bw, hr:live.hr
         };
         rSnakes.set(s.id, r);
       } else {
         r.id = s.id;
-        r.name = s.name;
-        r.bot = s.bot;
+        r.name = live.name;
+        r.bot = live.bot;
         r.tx = s.x; r.ty = s.y; r.ta = s.a;
         r.tpts = s.pts || r.tpts;
-        r.c = s.c;
-        r.len = s.len;
-        r.bw = s.bw;
-        r.hr = s.hr;
+        r.c = live.c;
+        r.len = live.len;
+        r.bw = live.bw;
+        r.hr = live.hr;
       }
     }
 
@@ -2970,6 +2972,49 @@ ctx.save();
   let localAcc = 0;
   const LOCAL_STEP = 1/120;
   let lastInputAngle = null;
+  function copySnakeSnapshot(src){
+    const out = new Map();
+    for (const s of src.values()){
+      out.set(s.id, {
+        id:s.id, x:s.x, y:s.y, a:s.a,
+        pts:(s.pts || []).map(p => [p[0], p[1]])
+      });
+    }
+    return out;
+  }
+
+  function buildInterpSnapshot(prev, curr, alpha){
+    const out = new Map();
+    const ex = Math.max(0, Math.min(0.55, alpha));
+    for (const s of curr.values()){
+      const p = prev && prev.get(s.id);
+      if (!p){
+        out.set(s.id, { id:s.id, x:s.x, y:s.y, a:s.a, pts:(s.pts||[]).map(q => [q[0], q[1]]) });
+        continue;
+      }
+      const cpts = s.pts || [];
+      const ppts = p.pts || [];
+      const n = Math.max(cpts.length, ppts.length);
+      const pts = new Array(n);
+      for (let i=0;i<n;i++){
+        const pp = ppts[i] || cpts[i] || [s.x, s.y];
+        const cp = cpts[i] || ppts[i] || [s.x, s.y];
+        pts[i] = [
+          cp[0] + (cp[0] - pp[0]) * ex,
+          cp[1] + (cp[1] - pp[1]) * ex
+        ];
+      }
+      const da = ((s.a - p.a + Math.PI*3)%(Math.PI*2)) - Math.PI;
+      out.set(s.id, {
+        id:s.id,
+        x: s.x + (s.x - p.x) * ex,
+        y: s.y + (s.y - p.y) * ex,
+        a: s.a + da * ex,
+        pts
+      });
+    }
+    return out;
+  }
 // v15 hotfix: ensure suck animation renderer exists in global scope
   if (typeof drawSuckers !== "function") {
     function drawSuckers(camX, camY, camZ, t){
@@ -3024,8 +3069,9 @@ function frame(t){
       if (rawA != null){
         // local direct mode should feel immediate; only smooth online input to hide packet jitter
         const isLocalInput = (ws && ws.__mode === "local");
+        const dA = (lastInputAngle == null) ? 0 : Math.abs(((rawA - lastInputAngle + Math.PI*3)%(Math.PI*2)) - Math.PI);
         const a = isLocalInput
-          ? rawA
+          ? ((lastInputAngle != null && dA < 0.005) ? lastInputAngle : rawA)
           : ((lastInputAngle == null)
               ? rawA
               : lerpAngle(lastInputAngle, rawA, 1 - Math.exp(-dt * 22)));
@@ -3042,7 +3088,11 @@ function frame(t){
     if (ws && ws.__mode === "local" && ws._server && ws.readyState === 1){
       localAcc += dt;
       let steps = 0;
+      if (!ws._server.__renderPrev){
+        ws._server.__renderPrev = copySnakeSnapshot(ws._server.snakes);
+      }
       while (localAcc >= LOCAL_STEP && steps < 5){
+        ws._server.__renderPrev = copySnakeSnapshot(ws._server.snakes);
         ws._server.tick(LOCAL_STEP);
         localAcc -= LOCAL_STEP;
         steps++;
@@ -3057,7 +3107,9 @@ function frame(t){
     if (isLocalDirect){
       // Local direct mode already runs a 120Hz fixed-step simulation in-process.
       // Render the latest authoritative state directly to avoid extra client-side lag/wobble.
-      syncLocalFromServer(t);
+      const alpha = Math.max(0, Math.min(1, localAcc / LOCAL_STEP));
+      const interp = buildInterpSnapshot(ws._server.__renderPrev, ws._server.snakes, alpha);
+      syncLocalFromServer(t, interp);
 
       for (const s of rSnakes.values()){
         s.x = s.tx;
