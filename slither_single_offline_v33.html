@@ -3111,6 +3111,7 @@ function frame(t){
       const interp = buildInterpSnapshot(ws._server.__renderPrev, ws._server.snakes, alpha);
       syncLocalFromServer(t, interp);
 
+      const bodySmooth = 1 - Math.exp(-dt * 36);
       for (const s of rSnakes.values()){
         s.x = s.tx;
         s.y = s.ty;
@@ -3122,8 +3123,13 @@ function frame(t){
         } else {
           for (let i=0;i<tp.length;i++){
             if (!s.pts[i]){ s.pts[i] = [tp[i][0], tp[i][1]]; continue; }
-            s.pts[i][0] = tp[i][0];
-            s.pts[i][1] = tp[i][1];
+            if (i === 0){
+              s.pts[i][0] = tp[i][0];
+              s.pts[i][1] = tp[i][1];
+            } else {
+              s.pts[i][0] = lerp(s.pts[i][0], tp[i][0], bodySmooth);
+              s.pts[i][1] = lerp(s.pts[i][1], tp[i][1], bodySmooth);
+            }
           }
         }
 
