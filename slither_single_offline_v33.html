@@ -654,6 +654,15 @@
           <div class="row">
             <label><input id="segmentedSnakes" type="checkbox" checked /> Segmented snakes</label>
           </div>
+          <div class="row">
+            <label>Segment look</label>
+            <select id="segmentStyle">
+              <option value="slither" selected>Slither (default)</option>
+              <option value="beads">Beads</option>
+              <option value="plates">Plates</option>
+              <option value="sleek">Sleek</option>
+            </select>
+          </div>
         </div>
 
 <div class="group">
@@ -842,6 +851,7 @@ let respawnSpam = null;
 
   
   const segmentedSnakesEl = document.getElementById("segmentedSnakes");
+  const segmentStyleEl = document.getElementById("segmentStyle");
 
 const resetSettingsBtn = document.getElementById("resetSettings");
 const presetName = document.getElementById("presetName");
@@ -2093,6 +2103,7 @@ const DEFAULT_UI = {
 
   chatEnable: false,
   segmentedSnakes: true,
+  segmentStyle: "slither",
   mouseEnable: false,
   disableWASD: false,
 
@@ -2131,6 +2142,7 @@ function readUiSettings(){
 
     chatEnable: !!(chatEnable && chatEnable.checked),
     segmentedSnakes: !!(segmentedSnakesEl && segmentedSnakesEl.checked),
+    segmentStyle: (segmentStyleEl && typeof segmentStyleEl.value === "string") ? segmentStyleEl.value : "slither",
     mouseEnable: !!(mouseEnable && mouseEnable.checked),
     disableWASD: !!(disableWASD && disableWASD.checked),
 
@@ -2170,6 +2182,7 @@ function applyUiSettings(s){
 
   if (chatEnable) chatEnable.checked = !!s.chatEnable;
   if (segmentedSnakesEl) segmentedSnakesEl.checked = !!s.segmentedSnakes;
+  if (segmentStyleEl) segmentStyleEl.value = (typeof s.segmentStyle === "string" ? s.segmentStyle : DEFAULT_UI.segmentStyle);
   if (mouseEnable) mouseEnable.checked = !!s.mouseEnable;
   if (disableWASD) disableWASD.checked = !!s.disableWASD;
 
@@ -2692,10 +2705,12 @@ ctx.save();
     ctx.lineJoin = "round";
 
     const segOn = (segmentedSnakesEl && segmentedSnakesEl.checked);
+    const segStyle = (segmentStyleEl && segmentStyleEl.value) ? segmentStyleEl.value : "slither";
 
     // body
     ctx.strokeStyle = s.c || "#fff";
-    ctx.lineWidth = segOn ? (bw * 0.70) : bw;
+    const bodyScale = segOn ? (segStyle === "sleek" ? 0.82 : (segStyle === "plates" ? 0.74 : 0.70)) : 1.0;
+    ctx.lineWidth = bw * bodyScale;
     // draw body from head -> tail but with "butt" cap so it never sticks past the head
     const hx0 = (typeof s.x==="number") ? s.x : pts[0][0];
     const hy0 = (typeof s.y==="number") ? s.y : pts[0][1];
@@ -2709,8 +2724,8 @@ ctx.save();
     ctx.stroke();
 
     // inner depth
-    ctx.strokeStyle = segOn ? "rgba(0,0,0,.12)" : "rgba(0,0,0,.18)";
-    ctx.lineWidth = segOn ? Math.max(8, innerW * 0.85) : innerW;
+    ctx.strokeStyle = segOn ? (segStyle === "sleek" ? "rgba(0,0,0,.08)" : "rgba(0,0,0,.12)") : "rgba(0,0,0,.18)";
+    ctx.lineWidth = segOn ? Math.max(8, innerW * (segStyle === "sleek" ? 0.95 : 0.85)) : innerW;
     ctx.beginPath();
     ctx.moveTo(hx0, hy0);
     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
@@ -2735,13 +2750,13 @@ ctx.save();
     // segments (optional)
     if (segOn){
       // Fast Slither-like segments: sprite stamps with view culling + LOD (prevents FPS jitter)
-      const rSeg = bw * 0.50;
+      const styleMul = (segStyle === "beads") ? 0.86 : (segStyle === "plates" ? 1.15 : (segStyle === "sleek" ? 1.35 : 1.0));
+      const rSeg = bw * (segStyle === "beads" ? 0.46 : (segStyle === "plates" ? 0.56 : (segStyle === "sleek" ? 0.42 : 0.50)));
       const spr = __segSprite(s.c || "#bfe0ff", rSeg);
 
-      const baseSpacing = Math.max(7, rSeg * 0.95);
-      // when zoomed out, increase world spacing to keep screen density similar
+      // keep world spacing stable to avoid zoom/camera-induced segment jitter
+      const spacing = Math.max(6, rSeg * 0.95 * styleMul);
       const z = Math.max(0.35, camZ || 1);
-      const spacing = baseSpacing / z;
 
       const invZ = 1 / z;
       const pad = 240;
