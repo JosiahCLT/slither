@@ -334,7 +334,7 @@
 
 /* PATCH v4: welcome + death overlays, top score, hide play/respawn in panel */
 #scoreTop{
-  position:fixed; left:50%; top:10px; transform:translateX(-50%);
+  position:fixed; right:16px; top:16px;
   z-index:70;
   font-weight:900; letter-spacing:.5px;
   background:rgba(8,10,14,.55);
@@ -654,6 +654,24 @@
           <div class="row">
             <label><input id="segmentedSnakes" type="checkbox" checked /> Segmented snakes</label>
           </div>
+          <div class="row" style="margin-top:10px">
+            <label>Snake look</label>
+            <div class="muted">10 variants</div>
+          </div>
+          <div class="row">
+            <select id="snakeVariant" style="width:100%">
+              <option value="classic" selected>Classic Smooth</option>
+              <option value="slither">Slither-like</option>
+              <option value="banded">Banded</option>
+              <option value="neon">Neon Glow</option>
+              <option value="armored">Armored Plates</option>
+              <option value="ghost">Ghost Glass</option>
+              <option value="toon">Toon Bold</option>
+              <option value="viper">Viper Stripe</option>
+              <option value="dots">Pearl Dots</option>
+              <option value="tech">Tech Core</option>
+            </select>
+          </div>
         </div>
 
 <div class="group">
@@ -842,6 +860,7 @@ let respawnSpam = null;
 
   
   const segmentedSnakesEl = document.getElementById("segmentedSnakes");
+  const snakeVariantEl = document.getElementById("snakeVariant");
 
 const resetSettingsBtn = document.getElementById("resetSettings");
 const presetName = document.getElementById("presetName");
@@ -881,6 +900,7 @@ const chatWrap = document.getElementById("chat");
   let chatEnabled = false;
   let chatTyping = false;
   let myName = "player";
+  let snakeVariant = "classic";
 
   const keys = new Set();
   let mouse = { x: innerWidth/2, y: innerHeight/2 };
@@ -920,6 +940,15 @@ const chatWrap = document.getElementById("chat");
     if (showMap && showLb && mapPos.value === lbPos.value) {
       if (lbPos.value.includes("T")) leaderBox.style.top = (16 + Number(mapSize.value) + 10) + "px";
       else leaderBox.style.bottom = (16 + Number(mapSize.value) + 10) + "px";
+    }
+
+    scoreTop.style.left = "";
+    scoreTop.style.bottom = "";
+    scoreTop.style.top = "16px";
+    if (showLb && lbPos.value === "TR"){
+      scoreTop.style.right = (16 + Number(lbW.value) + 12) + "px";
+    } else {
+      scoreTop.style.right = "16px";
     }
   }
 
@@ -1920,25 +1949,6 @@ if (dead.size){
           const arr = msg.snakes || [];
           // counts
           playerCount.textContent = (typeof msg.humans==="number") ? msg.humans : [...rSnakes.values()].filter(s=>!s.bot).length;
-        // Alive/dead detection for overlays + top score
-        const me = myId ? rSnakes.get(myId) : null;
-        const alive = !!me;
-        if (me) lastLen = Math.max(0, Math.floor(me.len||0));
-        scoreTop.textContent = "Length: " + (me ? Math.floor(me.len||0) : lastLen);
-        if (joinedOnce){
-          if (wasAlive && !alive){
-            deathScore.textContent = "Length: " + lastLen;
-            deathOverlay.classList.add("show");
-            deathRespawnBtn.disabled = false;
-            deathRespawnBtn.textContent = "Respawn";
-          }
-          if (!wasAlive && alive){
-            deathOverlay.classList.remove("show");
-            if(respawnSpam){ clearInterval(respawnSpam); respawnSpam=null; }
-          }
-        }
-        wasAlive = alive;
-
           botCountLive.textContent = msg.bots ?? 0;
 
           // mark seen
@@ -1969,6 +1979,21 @@ if (dead.size){
           for (const id of Array.from(rSnakes.keys())){
             if (!seen.has(id)) rSnakes.delete(id);
           }
+
+          const alive = updateTopLength();
+          if (joinedOnce){
+            if (wasAlive && !alive){
+              deathScore.textContent = "Length: " + lastLen;
+              deathOverlay.classList.add("show");
+              deathRespawnBtn.disabled = false;
+              deathRespawnBtn.textContent = "Respawn";
+            }
+            if (!wasAlive && alive){
+              deathOverlay.classList.remove("show");
+              if(respawnSpam){ clearInterval(respawnSpam); respawnSpam=null; }
+            }
+          }
+          wasAlive = alive;
 
           updateLeaderboard();
           return;
@@ -2093,6 +2118,7 @@ const DEFAULT_UI = {
 
   chatEnable: false,
   segmentedSnakes: true,
+  snakeVariant: "classic",
   mouseEnable: false,
   disableWASD: false,
 
@@ -2131,6 +2157,7 @@ function readUiSettings(){
 
     chatEnable: !!(chatEnable && chatEnable.checked),
     segmentedSnakes: !!(segmentedSnakesEl && segmentedSnakesEl.checked),
+    snakeVariant: (snakeVariantEl && snakeVariantEl.value) ? String(snakeVariantEl.value) : "classic",
     mouseEnable: !!(mouseEnable && mouseEnable.checked),
     disableWASD: !!(disableWASD && disableWASD.checked),
 
@@ -2170,6 +2197,12 @@ function applyUiSettings(s){
 
   if (chatEnable) chatEnable.checked = !!s.chatEnable;
   if (segmentedSnakesEl) segmentedSnakesEl.checked = !!s.segmentedSnakes;
+  if (snakeVariantEl){
+    const v = (typeof s.snakeVariant === "string") ? s.snakeVariant : DEFAULT_UI.snakeVariant;
+    snakeVariantEl.value = v;
+    if (snakeVariantEl.value !== v) snakeVariantEl.value = DEFAULT_UI.snakeVariant;
+    snakeVariant = snakeVariantEl.value;
+  }
   if (mouseEnable) mouseEnable.checked = !!s.mouseEnable;
   if (disableWASD) disableWASD.checked = !!s.disableWASD;
 
@@ -2291,6 +2324,13 @@ refreshPresetSelect();
   if (chatEnable){
     chatEnable.onchange = () => setChatEnabled(chatEnable.checked);
     setChatEnabled(chatEnable.checked);
+  }
+  if (snakeVariantEl){
+    snakeVariantEl.onchange = () => {
+      snakeVariant = snakeVariantEl.value || "classic";
+      saveLastSettings();
+    };
+    snakeVariant = snakeVariantEl.value || "classic";
   }
 // ----- Popup controls -----
   toastDur.oninput = () => toastDurLabel.textContent = Number(toastDur.value).toFixed(1);
@@ -2414,6 +2454,13 @@ refreshPresetSelect();
       `;
       lbBody.appendChild(row);
     });
+  }
+
+  function updateTopLength(){
+    const me = myId ? rSnakes.get(myId) : null;
+    if (me) lastLen = Math.max(0, Math.floor(me.len||0));
+    scoreTop.textContent = "Length: " + (me ? Math.floor(me.len||0) : lastLen);
+    return !!me;
   }
 
   // ----- Rendering -----
@@ -2679,67 +2726,62 @@ function drawSnake(s, camX, camY, camZ){
     const pts = s.pts || [];
     if (!pts.length) return;
 
-    // thickness scales with mass (length)
     const L = Math.max(0, Number(s.len)||0);
     const bwIn = (typeof s.bw === "number") ? s.bw : (18 + Math.sqrt(L) * 1.10);
     const bw = Math.max(18, bwIn);
     const hr = Math.max(14, bw * 0.70);
     const innerW = Math.max(10, bw * 0.46);
-ctx.save();
-    applyWorldTransform(camX, camY, camZ);
+    const color = s.c || "#fff";
 
+    const hx0 = (typeof s.x==="number") ? s.x : pts[0][0];
+    const hy0 = (typeof s.y==="number") ? s.y : pts[0][1];
+    const tail = pts[pts.length-1];
+
+    ctx.save();
+    applyWorldTransform(camX, camY, camZ);
     ctx.lineCap = "butt";
     ctx.lineJoin = "round";
 
-    const segOn = (segmentedSnakesEl && segmentedSnakesEl.checked);
+    const mode = snakeVariant || "classic";
+    const segOn = (segmentedSnakesEl && segmentedSnakesEl.checked) || mode === "slither";
 
-    // body
-    ctx.strokeStyle = s.c || "#fff";
-    ctx.lineWidth = segOn ? (bw * 0.70) : bw;
-    // draw body from head -> tail but with "butt" cap so it never sticks past the head
-    const hx0 = (typeof s.x==="number") ? s.x : pts[0][0];
-    const hy0 = (typeof s.y==="number") ? s.y : pts[0][1];
+    let baseWidth = bw;
+    let innerAlpha = .18;
+    if (mode === "slither"){ baseWidth = bw * .74; innerAlpha = .14; }
+    if (mode === "ghost"){ baseWidth = bw * .68; innerAlpha = .10; }
+    if (mode === "armored"){ baseWidth = bw * .82; innerAlpha = .22; }
 
-    // pts are clamped server-side to stay behind the head; render uses hx0/hy0 as the true front
-
-
+    ctx.strokeStyle = color;
+    ctx.lineWidth = segOn ? baseWidth : bw;
     ctx.beginPath();
     ctx.moveTo(hx0, hy0);
     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
     ctx.stroke();
 
-    // inner depth
-    ctx.strokeStyle = segOn ? "rgba(0,0,0,.12)" : "rgba(0,0,0,.18)";
+    const innerColor = (mode === "neon") ? "rgba(10,18,26,.34)" : `rgba(0,0,0,${innerAlpha})`;
+    ctx.strokeStyle = innerColor;
     ctx.lineWidth = segOn ? Math.max(8, innerW * 0.85) : innerW;
     ctx.beginPath();
     ctx.moveTo(hx0, hy0);
     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
     ctx.stroke();
 
-
-    // round tail cap (since body uses butt cap)
-    const tail = pts[pts.length-1];
     if (!segOn && tail){
-      ctx.fillStyle = s.c || "#fff";
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(tail[0], tail[1], bw*0.5, 0, Math.PI*2);
       ctx.fill();
-
       ctx.fillStyle = "rgba(0,0,0,.16)";
       ctx.beginPath();
       ctx.arc(tail[0], tail[1], innerW*0.52, 0, Math.PI*2);
       ctx.fill();
     }
 
-    
-    // segments (optional)
     if (segOn){
-      // Fast Slither-like segments: sprite stamps with view culling + LOD (prevents FPS jitter)
-      const rSeg = bw * 0.50;
-      const spr = __segSprite(s.c || "#bfe0ff", rSeg);
-
-      const baseSpacing = Math.max(7, rSeg * 0.95);
-      // when zoomed out, increase world spacing to keep screen density similar
+      const segScale = (mode === "armored") ? 0.54 : (mode === "slither" ? 0.48 : 0.5);
+      const rSeg = bw * segScale;
+      const spr = __segSprite(color, rSeg);
+      const baseSpacing = Math.max(7, rSeg * ((mode === "armored") ? 1.08 : 0.95));
       const z = Math.max(0.35, camZ || 1);
       const spacing = baseSpacing / z;
 
@@ -2757,52 +2799,113 @@ ctx.save();
       let acc = 0;
       let px = hx0, py = hy0;
       let stamps = 0;
-
       for (let i = 1; i < n; i += step){
         const x = pts[i][0], y = pts[i][1];
-
-        // cheap view cull before any expensive drawing work
-        if (x < left || x > right || y < top || y > bottom){
-          px = x; py = y;
-          continue;
-        }
+        if (x < left || x > right || y < top || y > bottom){ px = x; py = y; continue; }
 
         const dx = x - px, dy = y - py;
-        const d = Math.sqrt(dx*dx + dy*dy);
-        acc += d;
-
+        acc += Math.sqrt(dx*dx + dy*dy);
         if (acc >= spacing){
           acc -= spacing;
           ctx.drawImage(spr, x - spr.width*0.5, y - spr.height*0.5);
           if (++stamps >= maxStamps) break;
         }
-
         px = x; py = y;
       }
     }
 
-    // head
     const hx = hx0, hy = hy0;
-    ctx.beginPath();
-    ctx.fillStyle = s.c || "#fff";
-    ctx.arc(hx, hy, hr, 0, Math.PI*2);
-    ctx.fill();
 
-    // subtle head highlight for layering
-    ctx.globalAlpha = 0.22;
-    ctx.fillStyle = "rgba(255,255,255,.9)";
+    if (mode === "ghost") ctx.globalAlpha = 0.75;
+    if (mode === "tech"){
+      const hg = ctx.createRadialGradient(hx - hr*0.26, hy - hr*0.22, hr*0.2, hx, hy, hr);
+      hg.addColorStop(0, "rgba(255,255,255,.95)");
+      hg.addColorStop(.38, color);
+      hg.addColorStop(1, "rgba(0,0,0,.55)");
+      ctx.fillStyle = hg;
+    } else {
+      ctx.fillStyle = color;
+    }
+
     ctx.beginPath();
-    ctx.arc(hx - hr*0.28, hy - hr*0.28, hr*0.55, 0, Math.PI*2);
+    ctx.arc(hx, hy, hr, 0, Math.PI*2);
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // eyes
+    if (mode === "neon" || mode === "tech"){
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = (mode === "neon") ? "rgba(130,255,235,.45)" : "rgba(120,190,255,.45)";
+      ctx.lineWidth = Math.max(2, hr * .22);
+      ctx.beginPath();
+      ctx.moveTo(hx0, hy0);
+      for (let i=3;i<pts.length;i+=3) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    if (mode === "banded" || mode === "viper" || mode === "dots"){
+      const bandStep = Math.max(16, bw * (mode === "dots" ? 1.5 : 1.1));
+      const markR = Math.max(2, bw * (mode === "dots" ? 0.16 : 0.13));
+      let acc=0, px=hx0, py=hy0;
+      for (let i=1; i<pts.length; i++){
+        const x=pts[i][0], y=pts[i][1];
+        const dx=x-px, dy=y-py;
+        acc += Math.sqrt(dx*dx+dy*dy);
+        if (acc >= bandStep){
+          acc -= bandStep;
+          if (mode === "dots"){
+            ctx.fillStyle = "rgba(255,255,255,.55)";
+            ctx.beginPath(); ctx.arc(x,y,markR,0,Math.PI*2); ctx.fill();
+          } else {
+            ctx.strokeStyle = (mode === "viper") ? "rgba(12,18,22,.42)" : "rgba(255,255,255,.26)";
+            ctx.lineWidth = Math.max(2, bw*0.16);
+            ctx.beginPath();
+            ctx.arc(x, y, Math.max(5, bw*0.34), 0, Math.PI*2);
+            ctx.stroke();
+          }
+        }
+        px=x; py=y;
+      }
+    }
+
+    if (mode === "armored"){
+      ctx.strokeStyle = "rgba(255,255,255,.22)";
+      ctx.lineWidth = Math.max(2, bw*0.12);
+      ctx.beginPath();
+      for (let i=6; i<pts.length; i+=8){
+        const p = pts[i];
+        ctx.moveTo(p[0]-bw*0.22, p[1]);
+        ctx.lineTo(p[0]+bw*0.22, p[1]);
+      }
+      ctx.stroke();
+    }
+
+    if (mode === "toon"){
+      ctx.strokeStyle = "rgba(0,0,0,.42)";
+      ctx.lineWidth = Math.max(3, bw*0.22);
+      ctx.beginPath();
+      ctx.moveTo(hx0, hy0);
+      for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+
+    if (mode === "classic" || mode === "slither" || mode === "ghost"){
+      ctx.globalAlpha = (mode === "ghost") ? 0.16 : 0.22;
+      ctx.fillStyle = "rgba(255,255,255,.9)";
+      ctx.beginPath();
+      ctx.arc(hx - hr*0.28, hy - hr*0.28, hr*0.55, 0, Math.PI*2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
     const a = s.a || 0;
     const ex = Math.cos(a), ey = Math.sin(a);
     const px = -ey, py = ex;
 
-    const eyeR = Math.max(3.2, hr*0.25);
-    const pupR = Math.max(1.6, hr*0.12);
+    let eyeR = Math.max(3.2, hr*0.25);
+    let pupR = Math.max(1.6, hr*0.12);
+    if (mode === "slither") { eyeR = Math.max(3.4, hr*0.28); pupR = Math.max(1.5, hr*0.10); }
+    if (mode === "viper") { eyeR = Math.max(3.0, hr*0.22); pupR = Math.max(2.0, hr*0.14); }
 
     const eyeF = hr*0.42;
     const eyeS = hr*0.33;
@@ -2813,13 +2916,12 @@ ctx.save();
     ctx.arc(hx + ex*eyeF - px*eyeS, hy + ey*eyeF - py*eyeS, eyeR, 0, Math.PI*2);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(0,0,0,.7)";
+    ctx.fillStyle = (mode === "viper") ? "rgba(0,0,0,.88)" : "rgba(0,0,0,.7)";
     ctx.beginPath();
     ctx.arc(hx + ex*(eyeF+hr*0.12) + px*eyeS, hy + ey*(eyeF+hr*0.12) + py*eyeS, pupR, 0, Math.PI*2);
     ctx.arc(hx + ex*(eyeF+hr*0.12) - px*eyeS, hy + ey*(eyeF+hr*0.12) - py*eyeS, pupR, 0, Math.PI*2);
     ctx.fill();
 
-    // chat bubble (when enabled)
     if (chatEnabled && s.chatUntil && performance.now() < s.chatUntil && s.chatText){
       const msg = String(s.chatText);
       const text = msg.length > 40 ? msg.slice(0,39) + "…" : msg;
@@ -2851,6 +2953,7 @@ ctx.save();
 
     ctx.restore();
   }
+
 
   function drawMinimap(camX, camY){
     if (!showMap) return;
@@ -3210,6 +3313,7 @@ function frame(t){
     for (const s of rSnakes.values()){
       drawSnake(s, camX, camY, camZ);
     }
+    updateTopLength();
     drawMinimap(camX, camY);
 
     requestAnimationFrame(frame);
