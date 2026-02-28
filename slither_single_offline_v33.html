@@ -2941,7 +2941,8 @@ ctx.save();
           id:s.id, name:live.name, bot:live.bot,
           x:s.x, y:s.y, a:s.a, pts:(s.pts||[]).map(p => [p[0], p[1]]),
           tx:s.x, ty:s.y, ta:s.a, tpts:s.pts||[],
-          c:live.c, len:live.len, bw:live.bw, hr:live.hr
+          c:live.c, len:live.len, bw:live.bw, hr:live.hr,
+          _segSettleFrames: 8
         };
         rSnakes.set(s.id, r);
       } else {
@@ -3120,10 +3121,13 @@ function frame(t){
         const tp = s.tpts || [];
         if (!s.pts || s.pts.length !== tp.length){
           s.pts = tp.map(p => [p[0], p[1]]);
+          s._segSettleFrames = 8;
         } else {
+          const settle = (s._segSettleFrames|0);
+          const snapAll = settle > 0;
           for (let i=0;i<tp.length;i++){
             if (!s.pts[i]){ s.pts[i] = [tp[i][0], tp[i][1]]; continue; }
-            if (i === 0){
+            if (snapAll || i === 0){
               s.pts[i][0] = tp[i][0];
               s.pts[i][1] = tp[i][1];
             } else {
@@ -3131,6 +3135,7 @@ function frame(t){
               s.pts[i][1] = lerp(s.pts[i][1], tp[i][1], bodySmooth);
             }
           }
+          if (snapAll) s._segSettleFrames = settle - 1;
         }
 
         if (s.pts && s.pts.length){
