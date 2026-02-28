@@ -661,6 +661,7 @@
               <option value="beads">Beads</option>
               <option value="plates">Plates</option>
               <option value="sleek">Sleek</option>
+              <option value="fx">Slither FX (visual)</option>
             </select>
           </div>
         </div>
@@ -1890,6 +1891,8 @@ if (dead.size){
           welcomePlayBtn.textContent = "Play";
           myId = msg.id;
           joined = true;
+          setMapVisible(true);
+          applyHudLayout();
           toast("Joined.", "join");
           return;
         }
@@ -1961,15 +1964,15 @@ if (dead.size){
                 id:s.id, name:s.name||"", bot:!!s.bot,
                 x:s.x, y:s.y, a:s.a, pts:s.pts||[],
                 tx:s.x, ty:s.y, ta:s.a, tpts:s.pts||[],
-                c:s.c, len:s.len, bw:s.bw, hr:s.hr
+                c:s.c, len:s.len, bw:s.bw, hr:s.hr, tbw:s.bw, thr:s.hr
               });
             } else {
               cur.name = s.name || cur.name;
               cur.bot = !!s.bot;
               cur.c = s.c || cur.c;
               cur.len = (typeof s.len === "number") ? s.len : cur.len;
-              cur.bw = (typeof s.bw === "number") ? s.bw : cur.bw;
-              cur.hr = (typeof s.hr === "number") ? s.hr : cur.hr;
+              cur.tbw = (typeof s.bw === "number") ? s.bw : cur.tbw;
+              cur.thr = (typeof s.hr === "number") ? s.hr : cur.thr;
 
               cur.tx = s.x; cur.ty = s.y; cur.ta = s.a;
               cur.tpts = s.pts || cur.tpts;
@@ -2696,7 +2699,8 @@ function drawSnake(s, camX, camY, camZ){
     const L = Math.max(0, Number(s.len)||0);
     const bwIn = (typeof s.bw === "number") ? s.bw : (18 + Math.sqrt(L) * 1.10);
     const bw = Math.max(18, bwIn);
-    const hr = Math.max(14, bw * 0.70);
+    const hrBase = (typeof s.hr === "number") ? s.hr : (bw * 0.70);
+    const hr = Math.max(14, hrBase);
     const innerW = Math.max(10, bw * 0.46);
 ctx.save();
     applyWorldTransform(camX, camY, camZ);
@@ -2709,7 +2713,7 @@ ctx.save();
 
     // body
     ctx.strokeStyle = s.c || "#fff";
-    const bodyScale = segOn ? (segStyle === "sleek" ? 0.82 : (segStyle === "plates" ? 0.74 : 0.70)) : 1.0;
+    const bodyScale = segOn ? (segStyle === "sleek" ? 0.82 : (segStyle === "plates" ? 0.74 : (segStyle === "fx" ? 0.72 : 0.70))) : 1.0;
     ctx.lineWidth = bw * bodyScale;
     // draw body from head -> tail but with "butt" cap so it never sticks past the head
     const hx0 = (typeof s.x==="number") ? s.x : pts[0][0];
@@ -2749,36 +2753,50 @@ ctx.save();
     
     // segments (optional)
     if (segOn){
-      // Fast Slither-like segments: sprite stamps with view culling + LOD (prevents FPS jitter)
-      const styleMul = (segStyle === "beads") ? 0.86 : (segStyle === "plates" ? 1.15 : (segStyle === "sleek" ? 1.35 : 1.0));
-      const rSeg = bw * (segStyle === "beads" ? 0.46 : (segStyle === "plates" ? 0.56 : (segStyle === "sleek" ? 0.42 : 0.50)));
-      const spr = __segSprite(s.c || "#bfe0ff", rSeg);
+      if (segStyle === "fx"){
+        const ringGap = Math.max(8, bw * 0.52);
+        ctx.save();
+        ctx.strokeStyle = "rgba(255,255,255,.18)";
+        ctx.lineWidth = Math.max(1.5, bw * 0.18);
+        ctx.setLineDash([Math.max(4, bw * 0.34), ringGap]);
+        ctx.lineDashOffset = -performance.now() * 0.02;
+        ctx.beginPath();
+        ctx.moveTo(hx0, hy0);
+        for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        // Fast Slither-like segments: sprite stamps with view culling + LOD (prevents FPS jitter)
+        const styleMul = (segStyle === "beads") ? 0.86 : (segStyle === "plates" ? 1.15 : (segStyle === "sleek" ? 1.35 : 1.0));
+        const rSeg = bw * (segStyle === "beads" ? 0.46 : (segStyle === "plates" ? 0.56 : (segStyle === "sleek" ? 0.42 : 0.50)));
+        const spr = __segSprite(s.c || "#bfe0ff", rSeg);
 
-      // keep world spacing stable to avoid zoom/camera-induced segment jitter
-      const spacing = Math.max(6, rSeg * 0.95 * styleMul);
-      const z = Math.max(0.35, camZ || 1);
+        // keep world spacing stable to avoid zoom/camera-induced segment jitter
+        const spacing = Math.max(6, rSeg * 0.95 * styleMul);
+        const z = Math.max(0.35, camZ || 1);
 
-      const invZ = 1 / z;
-      const pad = 240;
-      const left = camX - innerWidth * 0.5 * invZ - pad;
-      const right = camX + innerWidth * 0.5 * invZ + pad;
-      const top = camY - innerHeight * 0.5 * invZ - pad;
-      const bottom = camY + innerHeight * 0.5 * invZ + pad;
+        const invZ = 1 / z;
+        const pad = 240;
+        const left = camX - innerWidth * 0.5 * invZ - pad;
+        const right = camX + innerWidth * 0.5 * invZ + pad;
+        const top = camY - innerHeight * 0.5 * invZ - pad;
+        const bottom = camY + innerHeight * 0.5 * invZ + pad;
 
-      const n = pts.length;
-      const avgPointSpacing = 5.4;
-      const stride = Math.max(1, Math.round(spacing / avgPointSpacing));
-      const maxStamps = (n > 1400 ? 520 : (n > 900 ? 650 : 820));
+        const n = pts.length;
+        const avgPointSpacing = 5.4;
+        const stride = Math.max(1, Math.round(spacing / avgPointSpacing));
+        const maxStamps = (n > 1400 ? 520 : (n > 900 ? 650 : 820));
 
-      let stamps = 0;
-      for (let i = 1; i < n; i += stride){
-        const x = pts[i][0], y = pts[i][1];
+        let stamps = 0;
+        for (let i = 1; i < n; i += stride){
+          const x = pts[i][0], y = pts[i][1];
 
-        // cheap view cull before any expensive drawing work
-        if (x < left || x > right || y < top || y > bottom) continue;
+          // cheap view cull before any expensive drawing work
+          if (x < left || x > right || y < top || y > bottom) continue;
 
-        ctx.drawImage(spr, x - spr.width*0.5, y - spr.height*0.5);
-        if (++stamps >= maxStamps) break;
+          ctx.drawImage(spr, x - spr.width*0.5, y - spr.height*0.5);
+          if (++stamps >= maxStamps) break;
+        }
       }
     }
 
@@ -2941,7 +2959,8 @@ ctx.save();
           id:s.id, name:live.name, bot:live.bot,
           x:s.x, y:s.y, a:s.a, pts:(s.pts||[]).map(p => [p[0], p[1]]),
           tx:s.x, ty:s.y, ta:s.a, tpts:s.pts||[],
-          c:live.c, len:live.len, bw:live.bw, hr:live.hr,
+          c:live.c, len:live.len,
+          bw:live.bw, hr:live.hr, tbw:live.bw, thr:live.hr,
           _segSettleFrames: 8
         };
         rSnakes.set(s.id, r);
@@ -2953,8 +2972,8 @@ ctx.save();
         r.tpts = s.pts || r.tpts;
         r.c = live.c;
         r.len = live.len;
-        r.bw = live.bw;
-        r.hr = live.hr;
+        r.tbw = live.bw;
+        r.thr = live.hr;
       }
     }
 
@@ -3206,6 +3225,17 @@ function frame(t){
 
     const camX = cam.x, camY = cam.y, camZ = cam.z;
 
+    // smooth visual body growth and keep top length HUD live in local/direct mode too
+    const massSmooth = 1 - Math.exp(-dt * 8);
+    for (const s of rSnakes.values()){
+      const tbw = (typeof s.tbw === "number") ? s.tbw : s.bw;
+      const thr = (typeof s.thr === "number") ? s.thr : s.hr;
+      if (typeof tbw === "number") s.bw = (typeof s.bw === "number") ? lerp(s.bw, tbw, massSmooth) : tbw;
+      if (typeof thr === "number") s.hr = (typeof s.hr === "number") ? lerp(s.hr, thr, massSmooth) : thr;
+    }
+    const meNow = (myId && rSnakes.has(myId)) ? rSnakes.get(myId) : null;
+    if (meNow) lastLen = Math.max(0, Math.floor(meNow.len||0));
+    scoreTop.textContent = "Length: " + (meNow ? Math.floor(meNow.len||0) : lastLen);
 
     // draw
     drawGrid(camX, camY, camZ);
