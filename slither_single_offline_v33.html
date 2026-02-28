@@ -2766,33 +2766,19 @@ ctx.save();
       const bottom = camY + innerHeight * 0.5 * invZ + pad;
 
       const n = pts.length;
-      const step = (n > 1400 ? 4 : (n > 900 ? 3 : (n > 520 ? 2 : 1)));
+      const avgPointSpacing = 5.4;
+      const stride = Math.max(1, Math.round(spacing / avgPointSpacing));
       const maxStamps = (n > 1400 ? 520 : (n > 900 ? 650 : 820));
 
-      let acc = 0;
-      let px = hx0, py = hy0;
       let stamps = 0;
-
-      for (let i = 1; i < n; i += step){
+      for (let i = 1; i < n; i += stride){
         const x = pts[i][0], y = pts[i][1];
 
         // cheap view cull before any expensive drawing work
-        if (x < left || x > right || y < top || y > bottom){
-          px = x; py = y;
-          continue;
-        }
+        if (x < left || x > right || y < top || y > bottom) continue;
 
-        const dx = x - px, dy = y - py;
-        const d = Math.sqrt(dx*dx + dy*dy);
-        acc += d;
-
-        if (acc >= spacing){
-          acc -= spacing;
-          ctx.drawImage(spr, x - spr.width*0.5, y - spr.height*0.5);
-          if (++stamps >= maxStamps) break;
-        }
-
-        px = x; py = y;
+        ctx.drawImage(spr, x - spr.width*0.5, y - spr.height*0.5);
+        if (++stamps >= maxStamps) break;
       }
     }
 
@@ -3000,7 +2986,7 @@ ctx.save();
 
   function buildInterpSnapshot(prev, curr, alpha){
     const out = new Map();
-    const ex = Math.max(0, Math.min(0.55, alpha));
+    const t = Math.max(0, Math.min(1, alpha));
     for (const s of curr.values()){
       const p = prev && prev.get(s.id);
       if (!p){
@@ -3015,16 +3001,15 @@ ctx.save();
         const pp = ppts[i] || cpts[i] || [s.x, s.y];
         const cp = cpts[i] || ppts[i] || [s.x, s.y];
         pts[i] = [
-          cp[0] + (cp[0] - pp[0]) * ex,
-          cp[1] + (cp[1] - pp[1]) * ex
+          lerp(pp[0], cp[0], t),
+          lerp(pp[1], cp[1], t)
         ];
       }
-      const da = ((s.a - p.a + Math.PI*3)%(Math.PI*2)) - Math.PI;
       out.set(s.id, {
         id:s.id,
-        x: s.x + (s.x - p.x) * ex,
-        y: s.y + (s.y - p.y) * ex,
-        a: s.a + da * ex,
+        x: lerp(p.x, s.x, t),
+        y: lerp(p.y, s.y, t),
+        a: lerpAngle(p.a, s.a, t),
         pts
       });
     }
