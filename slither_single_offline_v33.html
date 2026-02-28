@@ -2754,7 +2754,7 @@ ctx.save();
     // segments (optional)
     if (segOn){
       if (segStyle === "fx"){
-        // cylinder-style visual segmentation: keep silhouette smooth, add subtle ring bands only
+        // cylinder-style visual segmentation: smooth tube + subtle cross-band lines
         const z = Math.max(0.35, camZ || 1);
         const invZ = 1 / z;
         const pad = 240;
@@ -2764,30 +2764,50 @@ ctx.save();
         const bottom = camY + innerHeight * 0.5 * invZ + pad;
 
         const n = pts.length;
-        const ringSpacing = Math.max(6, bw * 0.42);
+        const bandSpacing = Math.max(7, bw * 0.46);
         const avgPointSpacing = 5.4;
-        const stride = Math.max(1, Math.round(ringSpacing / avgPointSpacing));
-        const ringR = Math.max(5, bw * 0.49);
+        const stride = Math.max(1, Math.round(bandSpacing / avgPointSpacing));
 
         ctx.save();
-        ctx.strokeStyle = "rgba(0,0,0,.18)";
-        ctx.lineWidth = Math.max(1.0, bw * 0.11);
+        ctx.lineCap = "round";
 
         let stamps = 0;
-        const maxStamps = (n > 1400 ? 620 : 900);
-        for (let i = 2; i < n; i += stride){
+        const maxStamps = (n > 1400 ? 560 : 820);
+        const halfBand = Math.max(2.2, bw * 0.44);
+        for (let i = 2; i < n-1; i += stride){
           const x = pts[i][0], y = pts[i][1];
           if (x < left || x > right || y < top || y > bottom) continue;
+
+          const a = pts[i-1], b = pts[i+1];
+          if (!a || !b) continue;
+          let tx = b[0] - a[0], ty = b[1] - a[1];
+          const tl = Math.hypot(tx, ty) || 1;
+          tx /= tl; ty /= tl;
+          const nx = -ty, ny = tx;
+
+          // dark groove line
+          ctx.strokeStyle = "rgba(0,0,0,.16)";
+          ctx.lineWidth = Math.max(0.8, bw * 0.085);
           ctx.beginPath();
-          ctx.arc(x, y, ringR, 0, Math.PI*2);
+          ctx.moveTo(x - nx * halfBand, y - ny * halfBand);
+          ctx.lineTo(x + nx * halfBand, y + ny * halfBand);
           ctx.stroke();
+
+          // soft top highlight of the same ring
+          ctx.strokeStyle = "rgba(255,255,255,.11)";
+          ctx.lineWidth = Math.max(0.7, bw * 0.05);
+          ctx.beginPath();
+          ctx.moveTo(x - nx * halfBand * 0.74 - tx * bw * 0.06, y - ny * halfBand * 0.74 - ty * bw * 0.06);
+          ctx.lineTo(x + nx * halfBand * 0.74 - tx * bw * 0.06, y + ny * halfBand * 0.74 - ty * bw * 0.06);
+          ctx.stroke();
+
           if (++stamps >= maxStamps) break;
         }
 
-        // soft highlight ridge to mimic Slither's glossy cylindrical body
-        ctx.globalAlpha = 0.20;
-        ctx.strokeStyle = "rgba(255,255,255,.50)";
-        ctx.lineWidth = Math.max(1.2, bw * 0.12);
+        // soft longitudinal highlight to keep glossy tube look
+        ctx.globalAlpha = 0.14;
+        ctx.strokeStyle = "rgba(255,255,255,.45)";
+        ctx.lineWidth = Math.max(1.0, bw * 0.10);
         ctx.beginPath();
         ctx.moveTo(hx0, hy0);
         for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
