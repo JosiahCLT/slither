@@ -412,31 +412,11 @@
       border-radius: 12px !important;
     }
 
-    #simDebug{
-      position:fixed;
-      left:16px;
-      bottom:16px;
-      z-index:95;
-      padding:8px 10px;
-      border-radius:12px;
-      font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-      color:rgba(220,235,255,.9);
-      background:rgba(8,12,22,.55);
-      border:1px solid rgba(255,255,255,.12);
-      backdrop-filter: blur(8px);
-      pointer-events:none;
-      white-space:pre;
-    }
-
 </style>
 </head>
 <body>
   <canvas id="game"></canvas>
   <div id="scoreTop" aria-hidden="true">Length: 0</div>
-  <div id="simDebug" aria-hidden="true">dt: --
-headDist: --
-tailDist: --
-lengthWanted: --</div>
 
   <div id="welcomeOverlay" class="overlay show">
     <div class="overlayCard">
@@ -799,7 +779,6 @@ lengthWanted: --</div>
 
   const toastHost = document.getElementById("toastHost");
 const scoreTop = document.getElementById("scoreTop");
-const simDebug = document.getElementById("simDebug");
 const welcomeOverlay = document.getElementById("welcomeOverlay");
 const welcomeName = document.getElementById("welcomeName");
 const welcomePlayBtn = document.getElementById("welcomePlayBtn");
@@ -1216,19 +1195,19 @@ function wsSend(obj){
           return 0;
         }
       },
-      updateTailCursor(s, dt, moved){
+      updateTailCursor(s){
         const want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
         if (typeof s.lengthVisual !== "number") s.lengthVisual = want;
 
-        const follow = 1 - Math.exp(-Math.max(0, dt) * 22);
+        // keep visual length responsive but smooth; growth should not stall tail flow
+        const follow = 1 - Math.exp(-1/120 * 22);
         s.lengthVisual += (want - s.lengthVisual) * follow;
 
         const hd = Math.max(0, Number(s.headDist) || 0);
         const targetTail = Math.max(0, hd - s.lengthVisual);
         const prevTail = Math.max(0, Number(s.tailDist) || 0);
-        const minAdvance = Math.max(0, Number(moved) || 0) * 0.18;
-        const monotonicTail = prevTail + minAdvance;
-        s.tailDist = Math.max(monotonicTail, targetTail);
+        // hard monotonic guarantee: tail never goes backward
+        s.tailDist = Math.max(prevTail, targetTail);
       },
       pruneOldPathPoints(s){
         const path = s.path;
@@ -1759,8 +1738,8 @@ function wsSend(obj){
           if (typeof s.lengthWanted !== "number"){
             s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
-          const moved = this.appendHeadToPath(s, s.x, s.y);
-          this.updateTailCursor(s, dt, moved);
+          this.appendHeadToPath(s, s.x, s.y);
+          this.updateTailCursor(s);
           this.pruneOldPathPoints(s);
           this.samplePathToPoints(s);
 
@@ -3409,23 +3388,7 @@ function frame(t){
     updateTopLength();
     drawMinimap(camX, camY);
 
-    if (simDebug){
-      let hd = NaN, td = NaN, lw = NaN;
-      if (ws && ws.__mode === "local" && ws._server && myId != null){
-        const meSrv = ws._server.snakes.get(myId);
-        if (meSrv){
-          hd = Number(meSrv.headDist);
-          td = Number(meSrv.tailDist);
-          lw = Number(meSrv.lengthWanted);
-        }
-      }
-      const dtMs = (dt * 1000).toFixed(2);
-      simDebug.textContent = `dt: ${dtMs}ms
-headDist: ${Number.isFinite(hd)?hd.toFixed(2):"--"}
-tailDist: ${Number.isFinite(td)?td.toFixed(2):"--"}
-lengthWanted: ${Number.isFinite(lw)?lw.toFixed(2):"--"}`;
-    }
-
+    updateLeaderboard();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
