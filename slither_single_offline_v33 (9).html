@@ -172,8 +172,7 @@
       box-shadow: none;
       backdrop-filter: blur(6px);
     }
-    #leaderBox .floatHeader{display:none}
-    #leaderBox .floatBody{padding:10px 12px 12px}
+        #leaderBox .floatBody{padding:10px 12px 12px}
     #lbBody{opacity:.92}
 
     #minimapBox{
@@ -334,7 +333,7 @@
 
 /* PATCH v4: welcome + death overlays, top score, hide play/respawn in panel */
 #scoreTop{
-  position:fixed; right:16px; top:16px;
+  position:fixed; left:50%; top:10px; transform:translateX(-50%);
   z-index:70;
   font-weight:900; letter-spacing:.5px;
   background:rgba(8,10,14,.55);
@@ -392,6 +391,7 @@
       backdrop-filter: blur(6px) !important;
     }
     #leaderBox .floatHeader{
+      display:flex !important;
       border-bottom: none !important;
       padding: 8px 10px 6px 10px !important;
       color: rgba(233,236,255,.62) !important;
@@ -412,11 +412,31 @@
       border-radius: 12px !important;
     }
 
+    #simDebug{
+      position:fixed;
+      left:16px;
+      bottom:16px;
+      z-index:95;
+      padding:8px 10px;
+      border-radius:12px;
+      font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      color:rgba(220,235,255,.9);
+      background:rgba(8,12,22,.55);
+      border:1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(8px);
+      pointer-events:none;
+      white-space:pre;
+    }
+
 </style>
 </head>
 <body>
   <canvas id="game"></canvas>
   <div id="scoreTop" aria-hidden="true">Length: 0</div>
+  <div id="simDebug" aria-hidden="true">dt: --
+headDist: --
+tailDist: --
+lengthWanted: --</div>
 
   <div id="welcomeOverlay" class="overlay show">
     <div class="overlayCard">
@@ -779,6 +799,7 @@
 
   const toastHost = document.getElementById("toastHost");
 const scoreTop = document.getElementById("scoreTop");
+const simDebug = document.getElementById("simDebug");
 const welcomeOverlay = document.getElementById("welcomeOverlay");
 const welcomeName = document.getElementById("welcomeName");
 const welcomePlayBtn = document.getElementById("welcomePlayBtn");
@@ -942,14 +963,6 @@ const chatWrap = document.getElementById("chat");
       else leaderBox.style.bottom = (16 + Number(mapSize.value) + 10) + "px";
     }
 
-    scoreTop.style.left = "";
-    scoreTop.style.bottom = "";
-    scoreTop.style.top = "16px";
-    if (showLb && lbPos.value === "TR"){
-      scoreTop.style.right = (16 + Number(lbW.value) + 12) + "px";
-    } else {
-      scoreTop.style.right = "16px";
-    }
   }
 
   function setUICollapsed(v){
@@ -1188,7 +1201,7 @@ function wsSend(obj){
         if (!path.length){
           s.headDist = Number(s.headDist) || 0;
           path.push({ x, y, d: s.headDist });
-          return;
+          return 0;
         }
         const last = path[path.length - 1];
         const dx = x - last.x, dy = y - last.y;
@@ -1196,22 +1209,26 @@ function wsSend(obj){
         if (moved > 1e-6){
           s.headDist = (Number(s.headDist) || 0) + moved;
           path.push({ x, y, d: s.headDist });
+          return moved;
         } else {
           last.x = x; last.y = y;
           if (typeof s.headDist !== "number") s.headDist = Number(last.d) || 0;
+          return 0;
         }
       },
-      updateTailCursor(s, dt){
+      updateTailCursor(s, dt, moved){
         const want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
         if (typeof s.lengthVisual !== "number") s.lengthVisual = want;
 
-        // Continuous float follow so visual length changes are smooth (both grow + shrink).
-        const follow = 1 - Math.exp(-Math.max(0, dt) * 20);
+        const follow = 1 - Math.exp(-Math.max(0, dt) * 22);
         s.lengthVisual += (want - s.lengthVisual) * follow;
 
         const hd = Math.max(0, Number(s.headDist) || 0);
-        // Tail position is driven directly by traveled distance offset (rope-like flow).
-        s.tailDist = Math.max(0, hd - s.lengthVisual);
+        const targetTail = Math.max(0, hd - s.lengthVisual);
+        const prevTail = Math.max(0, Number(s.tailDist) || 0);
+        const minAdvance = Math.max(0, Number(moved) || 0) * 0.18;
+        const monotonicTail = prevTail + minAdvance;
+        s.tailDist = Math.max(monotonicTail, targetTail);
       },
       pruneOldPathPoints(s){
         const path = s.path;
@@ -1742,8 +1759,8 @@ function wsSend(obj){
           if (typeof s.lengthWanted !== "number"){
             s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
-          this.appendHeadToPath(s, s.x, s.y);
-          this.updateTailCursor(s, dt);
+          const moved = this.appendHeadToPath(s, s.x, s.y);
+          this.updateTailCursor(s, dt, moved);
           this.pruneOldPathPoints(s);
           this.samplePathToPoints(s);
 
@@ -3240,7 +3257,7 @@ function drawSnake(s, camX, camY, camZ){
 const cam = { x:0, y:0, z:1 };
 
 function frame(t){
-    const dt = Math.min(0.05, (t - lastFrame) / 1000);
+    const dt = Math.max(0.001, Math.min(0.05, (t - lastFrame) / 1000));
     lastFrame = t;
     // send input (before sim tick in local mode for tight control)
     if (ws && ws.readyState === WebSocket.OPEN && joined && !isTyping()){
@@ -3391,6 +3408,23 @@ function frame(t){
     }
     updateTopLength();
     drawMinimap(camX, camY);
+
+    if (simDebug){
+      let hd = NaN, td = NaN, lw = NaN;
+      if (ws && ws.__mode === "local" && ws._server && myId != null){
+        const meSrv = ws._server.snakes.get(myId);
+        if (meSrv){
+          hd = Number(meSrv.headDist);
+          td = Number(meSrv.tailDist);
+          lw = Number(meSrv.lengthWanted);
+        }
+      }
+      const dtMs = (dt * 1000).toFixed(2);
+      simDebug.textContent = `dt: ${dtMs}ms
+headDist: ${Number.isFinite(hd)?hd.toFixed(2):"--"}
+tailDist: ${Number.isFinite(td)?td.toFixed(2):"--"}
+lengthWanted: ${Number.isFinite(lw)?lw.toFixed(2):"--"}`;
+    }
 
     requestAnimationFrame(frame);
   }
