@@ -1184,46 +1184,54 @@ function wsSend(obj){
         return this.snakeMinTrailLength() + this.massToTrailDist(len);
       },
       appendHeadToPath(s, x, y){
-        const path = s.path || (s.path = [[x, y]]);
+        const path = s.path || (s.path = [{ x, y, d: (Number(s.headDist) || 0) }]);
         if (!path.length){
-          path.push([x, y]);
-          s.pathLen = 0;
+          s.headDist = Number(s.headDist) || 0;
+          path.push({ x, y, d: s.headDist });
           return;
         }
         const last = path[path.length - 1];
-        const dx = x - last[0], dy = y - last[1];
-        const d = Math.hypot(dx, dy);
-        if (d > 1e-6){
-          path.push([x, y]);
-          s.pathLen = (s.pathLen || 0) + d;
+        const dx = x - last.x, dy = y - last.y;
+        const moved = Math.hypot(dx, dy);
+        if (moved > 1e-6){
+          s.headDist = (Number(s.headDist) || 0) + moved;
+          path.push({ x, y, d: s.headDist });
         } else {
-          last[0] = x; last[1] = y;
+          last.x = x; last.y = y;
+          if (typeof s.headDist !== "number") s.headDist = Number(last.d) || 0;
         }
       },
-      trimPathToWanted(s){
+      updateTailCursor(s){
+        const want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
+        const hd = Math.max(0, Number(s.headDist) || 0);
+        s.tailDist = Math.max(0, hd - want);
+      },
+      pruneOldPathPoints(s){
         const path = s.path;
-        if (!path || path.length < 2) return;
-        let want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
-        let total = Math.max(0, Number(s.pathLen) || 0);
-
-        while (path.length > 1 && total > want){
-          const p0 = path[0], p1 = path[1];
-          const dx = p1[0] - p0[0], dy = p1[1] - p0[1];
-          const seg = Math.hypot(dx, dy);
-          if (seg < 1e-6){ path.shift(); continue; }
-          const over = total - want;
-          if (over >= seg){
-            total -= seg;
-            path.shift();
-          } else {
-            const t = over / seg;
-            p0[0] += dx * t;
-            p0[1] += dy * t;
-            total = want;
-            break;
-          }
+        if (!path || path.length < 3) return;
+        const keepBehind = 200;
+        const cut = Math.max(0, (Number(s.tailDist) || 0) - keepBehind);
+        while (path.length > 2 && path[1].d < cut){
+          path.shift();
         }
-        s.pathLen = total;
+      },
+      samplePathAtDist(path, dist){
+        const n = path.length;
+        if (!n) return [0, 0];
+        if (dist <= path[0].d) return [path[0].x, path[0].y];
+        if (dist >= path[n-1].d) return [path[n-1].x, path[n-1].y];
+
+        let lo = 0, hi = n - 1;
+        while (lo + 1 < hi){
+          const mid = (lo + hi) >> 1;
+          if (path[mid].d <= dist) lo = mid;
+          else hi = mid;
+        }
+
+        const a = path[lo], b = path[hi];
+        const span = Math.max(1e-6, b.d - a.d);
+        const t = (dist - a.d) / span;
+        return [a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t];
       },
       samplePathToPoints(s){
         const path = s.path;
@@ -1233,25 +1241,15 @@ function wsSend(obj){
         const maxPts = 1400;
         const out = [];
 
-        const head = path[path.length - 1];
-        out.push([head[0], head[1]]);
+        const hd = Math.max(0, Number(s.headDist) || 0);
+        const td = Math.max(0, Number(s.tailDist) || 0);
 
-        let nextD = spacing;
-        let walked = 0;
-
-        for (let i = path.length - 1; i > 0 && out.length < maxPts; i--){
-          const ax = path[i][0], ay = path[i][1];
-          const bx = path[i-1][0], by = path[i-1][1];
-          const dx = bx - ax, dy = by - ay;
-          const seg = Math.hypot(dx, dy);
-          if (seg < 1e-6) continue;
-
-          while (walked + seg >= nextD && out.length < maxPts){
-            const t = (nextD - walked) / seg;
-            out.push([ax + dx * t, ay + dy * t]);
-            nextD += spacing;
-          }
-          walked += seg;
+        for (let i = 0; i < maxPts; i++){
+          const raw = hd - i * spacing;
+          const sd = raw <= td ? td : raw;
+          const p = this.samplePathAtDist(path, sd);
+          out.push(p);
+          if (sd <= td + 1e-6) break;
         }
 
         s.pts = out;
@@ -1435,7 +1433,8 @@ function wsSend(obj){
           len: bot ? 55 : 48,
           pts: [],
           path: [],
-          pathLen: 0,
+          headDist: 0,
+          tailDist: 0,
           lengthWanted: 0,
           inA: null,
           inB: false,
@@ -1444,15 +1443,18 @@ function wsSend(obj){
           _boostFoodCd: 0
         };
         s.lengthWanted = this.snakeTrailLengthForMass(s.len);
-        s.path = [[s.x, s.y]];
-        s.pathLen = 0;
         const spacing = this.snakeSegmentSpacing();
         const seedSteps = Math.max(2, Math.floor(s.lengthWanted / spacing));
-        for (let i=1; i<=seedSteps; i++){
-          const nx = s.x - Math.cos(s.a) * i * spacing;
-          const ny = s.y - Math.sin(s.a) * i * spacing;
-          s.path.unshift([nx, ny]);
-          s.pathLen += spacing;
+        s.headDist = seedSteps * spacing;
+        s.tailDist = Math.max(0, s.headDist - s.lengthWanted);
+        s.path = [];
+        for (let i=seedSteps; i>=0; i--){
+          const d = (seedSteps - i) * spacing;
+          s.path.push({
+            x: s.x - Math.cos(s.a) * i * spacing,
+            y: s.y - Math.sin(s.a) * i * spacing,
+            d
+          });
         }
         this.samplePathToPoints(s);
         this.snakes.set(id, s);
@@ -1730,7 +1732,8 @@ function wsSend(obj){
             s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
           this.appendHeadToPath(s, s.x, s.y);
-          this.trimPathToWanted(s);
+          this.updateTailCursor(s);
+          this.pruneOldPathPoints(s);
           this.samplePathToPoints(s);
 
 // ensure no body point sits in front of the head along current heading
@@ -1763,7 +1766,8 @@ s._bb0=minx; s._bb1=maxx; s._bb2=miny; s._bb3=maxy;
             s.len = Math.max(minLen, s.len - drain*dt);
             const drained = Math.max(0, before - s.len);
             if (drained > 0){
-              s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(before)) - this.massToTrailDist(drained));
+              const trailDrainRate = this.massToTrailDist(drain);
+              s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(before)) - trailDrainRate * dt);
             }
 
             s._boostMassAcc = (s._boostMassAcc || 0) + drained;
