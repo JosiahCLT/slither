@@ -172,8 +172,7 @@
       box-shadow: none;
       backdrop-filter: blur(6px);
     }
-    #leaderBox .floatHeader{display:none}
-    #leaderBox .floatBody{padding:10px 12px 12px}
+        #leaderBox .floatBody{padding:10px 12px 12px}
     #lbBody{opacity:.92}
 
     #minimapBox{
@@ -392,6 +391,7 @@
       backdrop-filter: blur(6px) !important;
     }
     #leaderBox .floatHeader{
+      display:flex !important;
       border-bottom: none !important;
       padding: 8px 10px 6px 10px !important;
       color: rgba(233,236,255,.62) !important;
@@ -654,6 +654,24 @@
           <div class="row">
             <label><input id="segmentedSnakes" type="checkbox" checked /> Segmented snakes</label>
           </div>
+          <div class="row" style="margin-top:10px">
+            <label>Snake look</label>
+            <div class="muted">10 variants</div>
+          </div>
+          <div class="row">
+            <select id="snakeVariant" style="width:100%">
+              <option value="classic" selected>Classic Smooth</option>
+              <option value="slither">Slither-like</option>
+              <option value="banded">Banded</option>
+              <option value="neon">Neon Glow</option>
+              <option value="armored">Armored Plates</option>
+              <option value="ghost">Ghost Glass</option>
+              <option value="toon">Toon Bold</option>
+              <option value="viper">Viper Stripe</option>
+              <option value="dots">Pearl Dots</option>
+              <option value="tech">Tech Core</option>
+            </select>
+          </div>
         </div>
 
 <div class="group">
@@ -842,6 +860,7 @@ let respawnSpam = null;
 
   
   const segmentedSnakesEl = document.getElementById("segmentedSnakes");
+  const snakeVariantEl = document.getElementById("snakeVariant");
 
 const resetSettingsBtn = document.getElementById("resetSettings");
 const presetName = document.getElementById("presetName");
@@ -881,6 +900,7 @@ const chatWrap = document.getElementById("chat");
   let chatEnabled = false;
   let chatTyping = false;
   let myName = "player";
+  let snakeVariant = "classic";
 
   const keys = new Set();
   let mouse = { x: innerWidth/2, y: innerHeight/2 };
@@ -921,6 +941,7 @@ const chatWrap = document.getElementById("chat");
       if (lbPos.value.includes("T")) leaderBox.style.top = (16 + Number(mapSize.value) + 10) + "px";
       else leaderBox.style.bottom = (16 + Number(mapSize.value) + 10) + "px";
     }
+
   }
 
   function setUICollapsed(v){
@@ -1145,6 +1166,105 @@ function wsSend(obj){
         const bw = this.snakeBodyWidth(len);
         return Math.max(14, bw * 0.65);
       },
+      snakeSegmentSpacing(){ return 10; },
+      snakeMinTrailLength(){ return 140; },
+      massToTrailDist(mass){
+        const m = Math.max(0, Number(mass) || 0);
+        return m * 4.2;
+      },
+      snakeTrailLengthForMass(len){
+        return this.snakeMinTrailLength() + this.massToTrailDist(len);
+      },
+      appendHeadToPath(s, x, y){
+        const path = s.path || (s.path = [{ x, y, d: (Number(s.headDist) || 0) }]);
+        if (!path.length){
+          s.headDist = Number(s.headDist) || 0;
+          path.push({ x, y, d: s.headDist });
+          return 0;
+        }
+        const last = path[path.length - 1];
+        const dx = x - last.x, dy = y - last.y;
+        const moved = Math.hypot(dx, dy);
+        if (moved > 1e-6){
+          s.headDist = (Number(s.headDist) || 0) + moved;
+          path.push({ x, y, d: s.headDist });
+          return moved;
+        } else {
+          last.x = x; last.y = y;
+          if (typeof s.headDist !== "number") s.headDist = Number(last.d) || 0;
+          return 0;
+        }
+      },
+      updateTailCursor(s, dt, moved){
+        const want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
+        if (typeof s.lengthVisual !== "number") s.lengthVisual = want;
+
+        // Float/time-based follow for smooth growth/shrink visuals.
+        const follow = 1 - Math.exp(-Math.max(0, dt) * 18);
+        s.lengthVisual += (want - s.lengthVisual) * follow;
+
+        const hd = Math.max(0, Number(s.headDist) || 0);
+        const targetTail = Math.max(0, hd - s.lengthVisual);
+        const prevTail = Math.max(0, Number(s.tailDist) || 0);
+
+        // Tail always advances (never backward), even during rapid growth.
+        const mv = Math.max(0, Number(moved) || 0);
+        const minDelta = mv * 0.20;
+        const maxDelta = mv * 1.70 + 36 * Math.max(0, dt);
+        const desiredDelta = targetTail - prevTail;
+        let delta = Number.isFinite(desiredDelta) ? desiredDelta : minDelta;
+        delta = Math.max(minDelta, Math.min(maxDelta, delta));
+
+        s.tailDist = prevTail + delta;
+      },
+      pruneOldPathPoints(s){
+        const path = s.path;
+        if (!path || path.length < 3) return;
+        const keepBehind = 200;
+        const cut = Math.max(0, (Number(s.tailDist) || 0) - keepBehind);
+        while (path.length > 2 && path[1].d < cut){
+          path.shift();
+        }
+      },
+      samplePathAtDist(path, dist){
+        const n = path.length;
+        if (!n) return [0, 0];
+        if (dist <= path[0].d) return [path[0].x, path[0].y];
+        if (dist >= path[n-1].d) return [path[n-1].x, path[n-1].y];
+
+        let lo = 0, hi = n - 1;
+        while (lo + 1 < hi){
+          const mid = (lo + hi) >> 1;
+          if (path[mid].d <= dist) lo = mid;
+          else hi = mid;
+        }
+
+        const a = path[lo], b = path[hi];
+        const span = Math.max(1e-6, b.d - a.d);
+        const t = (dist - a.d) / span;
+        return [a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t];
+      },
+      samplePathToPoints(s){
+        const path = s.path;
+        if (!path || !path.length){ s.pts = [[s.x, s.y]]; return; }
+
+        const spacing = this.snakeSegmentSpacing();
+        const maxPts = 1400;
+        const out = [];
+
+        const hd = Math.max(0, Number(s.headDist) || 0);
+        const td = Math.max(0, Number(s.tailDist) || 0);
+
+        for (let i = 0; i < maxPts; i++){
+          const raw = hd - i * spacing;
+          const sd = raw <= td ? td : raw;
+          const p = this.samplePathAtDist(path, sd);
+          out.push(p);
+          if (sd <= td + 1e-6) break;
+        }
+
+        s.pts = out;
+      },
 
       ensureGlows(addList, rmList){
         const want = Math.max(0, Math.round((this.settings.glowCount ?? 10)));
@@ -1323,22 +1443,36 @@ function wsSend(obj){
           c: this.randColor(),
           len: bot ? 55 : 48,
           pts: [],
+          path: [],
+          headDist: 0,
+          tailDist: 0,
+          lengthWanted: 0,
+          lengthVisual: 0,
+          lenRender: 0,
           inA: null,
           inB: false,
           aiT: 0,
           aiA: this.rand(-Math.PI, Math.PI),
           _boostFoodCd: 0
         };
-        // seed body points behind head (include head at pts[0])
-const want0 = Math.max(26, Math.min(1400, Math.floor(22 + (Math.max(0, (s.len||0)) * 1.20))));
-const seedSpacing = 3.8 + Math.min(14, Math.sqrt(Math.max(0, (s.len||0))) * 0.18);
-s.pts = [[s.x, s.y]];
-for(let i=1;i<want0;i++){
-  s.pts.push([s.x - Math.cos(s.a)*i*seedSpacing, s.y - Math.sin(s.a)*i*seedSpacing]);
-}
-s._trailRem = 0;
-s.lenv = s.len;
-this.snakes.set(id, s);
+        s.lengthWanted = this.snakeTrailLengthForMass(s.len);
+        s.lengthVisual = s.lengthWanted;
+        s.lenRender = s.len;
+        const spacing = this.snakeSegmentSpacing();
+        const seedSteps = Math.max(2, Math.floor(s.lengthVisual / spacing));
+        s.headDist = seedSteps * spacing;
+        s.tailDist = Math.max(0, s.headDist - s.lengthVisual);
+        s.path = [];
+        for (let i=seedSteps; i>=0; i--){
+          const d = (seedSteps - i) * spacing;
+          s.path.push({
+            x: s.x - Math.cos(s.a) * i * spacing,
+            y: s.y - Math.sin(s.a) * i * spacing,
+            d
+          });
+        }
+        this.samplePathToPoints(s);
+        this.snakes.set(id, s);
         return s;
       },
       ensureBots(){
@@ -1609,49 +1743,13 @@ this.snakes.set(id, s);
           s.y += Math.sin(s.a) * spd * dt;
           this.clampWorld(s);
 
-          // length growth should appear at the tail (Slither-like): smooth "effective length"
-          if (s.lenv == null) s.lenv = s.len;
-          const lenK = 1 - Math.pow(0.06, dt); // easing factor
-          s.lenv += (s.len - s.lenv) * lenK;
-
-          // body trail (head point is continuous -> removes jitter; adaptive sampling for perf)
-          const spacing = 3.8 + Math.min(14, Math.sqrt(Math.max(0, s.lenv||0)) * 0.18);
-
-          if (!s.pts || !s.pts.length){
-            s.pts = [[s.x, s.y]];
-            s._trailRem = 0;
-          } else {
-            // keep pts[0] locked to the true head position every tick (smooth)
-            s.pts[0][0] = s.x;
-            s.pts[0][1] = s.y;
-
-            // insert additional trail points behind the head based on distance traveled
-            const ox = (typeof s.px === "number") ? s.px : s.x;
-            const oy = (typeof s.py === "number") ? s.py : s.y;
-            const dx = s.x - ox, dy = s.y - oy;
-            let dist = Math.hypot(dx, dy);
-
-            if (dist > 0.0001){
-              const ux = dx / dist, uy = dy / dist;
-              let rem = (typeof s._trailRem === "number") ? s._trailRem : 0;
-              let sx = ox, sy = oy;
-
-              // walk along the movement segment and add points every `spacing`
-              while (rem + dist >= spacing){
-                const step = spacing - rem;
-                sx += ux * step;
-                sy += uy * step;
-                s.pts.splice(1, 0, [sx, sy]); // newest behind head
-                dist -= step;
-                rem = 0;
-              }
-              rem += dist;
-              s._trailRem = rem;
-            }
+          if (typeof s.lengthWanted !== "number"){
+            s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
-
-          const want = Math.max(26, Math.min(1400, Math.floor(22 + (Math.max(0, (s.lenv||0))) * 1.20)));
-          if (s.pts.length > want) s.pts.length = want;
+          const moved = this.appendHeadToPath(s, s.x, s.y);
+          this.updateTailCursor(s, dt, moved);
+          this.pruneOldPathPoints(s);
+          this.samplePathToPoints(s);
 
 // ensure no body point sits in front of the head along current heading
 const fxh = Math.cos(s.a), fyh = Math.sin(s.a);
@@ -1678,10 +1776,13 @@ s._bb0=minx; s._bb1=maxx; s._bb2=miny; s._bb3=maxy;
 
           // boost drain + pellets
           if (boosting && s.inB){
-            const drain = (this.settings.boostDrain ?? 12);
+            const drain = Number(this.settings.boostDrain ?? 12);
             const before = s.len;
-            s.len = Math.max(minLen, s.len - drain*dt);
+            s.len = Math.max(minLen, s.len - drain * dt);
             const drained = Math.max(0, before - s.len);
+
+            const trailDrainRate = this.massToTrailDist(drain);
+            s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(before)) - trailDrainRate * dt);
 
             s._boostMassAcc = (s._boostMassAcc || 0) + drained;
             const pelletMass = 2.6;
@@ -1702,10 +1803,15 @@ while (s._boostMassAcc >= pelletMass && this.foods.size < cap && spawned < spawn
             if (s._boostMassAcc) s._boostMassAcc = Math.max(0, s._boostMassAcc - 60*dt);
           }
 
-          // size scales with mass (thicker + slightly larger head)
-          s.bw = this.snakeBodyWidth(s.len);
+          // smooth visual mass to avoid jittery width pops during boost/eat bursts
+          if (typeof s.lenRender !== "number") s.lenRender = s.len;
+          const lenFollow = 1 - Math.exp(-dt * 12);
+          s.lenRender += (s.len - s.lenRender) * lenFollow;
+
+          // size scales with (smoothed) visual mass
+          s.bw = this.snakeBodyWidth(s.lenRender);
           s.br = s.bw * 0.5;
-          s.hr = this.snakeHeadRadius(s.len);
+          s.hr = this.snakeHeadRadius(s.lenRender);
         }
         // eating food (reliable multi-eat + swept checks)
         for (const s of this.snakes.values()){
@@ -1752,13 +1858,16 @@ const take = (hits.length > maxEat) ? hits.slice(0, maxEat) : hits;
             const __f = this.removeFood(id);
             if (__f && this.__direct && this._eatEv) this._eatEv.push({ x: __f.x, y: __f.y, r: (__f.r||6), c: (__f.c||"rgba(106,167,255,.95)"), t: __f.t||"n", eaterId: s.id });
             eat.push(id);
-            s.len += this.foodValue(ft);
+            const gain = this.foodValue(ft);
+            s.len += gain;
+            s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(s.len)) + this.massToTrailDist(gain));
           }
 
-          // refresh size immediately so eat radius stays correct even while growing
-          s.bw = this.snakeBodyWidth(s.len);
+          // keep eat radius responsive, but render mass smoothing handles visual width in movement step
+          if (typeof s.lenRender !== "number") s.lenRender = s.len;
+          s.bw = this.snakeBodyWidth(s.lenRender);
           s.br = s.bw * 0.5;
-          s.hr = this.snakeHeadRadius(s.len);
+          s.hr = this.snakeHeadRadius(s.lenRender);
         }
 
 
@@ -1920,25 +2029,6 @@ if (dead.size){
           const arr = msg.snakes || [];
           // counts
           playerCount.textContent = (typeof msg.humans==="number") ? msg.humans : [...rSnakes.values()].filter(s=>!s.bot).length;
-        // Alive/dead detection for overlays + top score
-        const me = myId ? rSnakes.get(myId) : null;
-        const alive = !!me;
-        if (me) lastLen = Math.max(0, Math.floor(me.len||0));
-        scoreTop.textContent = "Length: " + (me ? Math.floor(me.len||0) : lastLen);
-        if (joinedOnce){
-          if (wasAlive && !alive){
-            deathScore.textContent = "Length: " + lastLen;
-            deathOverlay.classList.add("show");
-            deathRespawnBtn.disabled = false;
-            deathRespawnBtn.textContent = "Respawn";
-          }
-          if (!wasAlive && alive){
-            deathOverlay.classList.remove("show");
-            if(respawnSpam){ clearInterval(respawnSpam); respawnSpam=null; }
-          }
-        }
-        wasAlive = alive;
-
           botCountLive.textContent = msg.bots ?? 0;
 
           // mark seen
@@ -1969,6 +2059,21 @@ if (dead.size){
           for (const id of Array.from(rSnakes.keys())){
             if (!seen.has(id)) rSnakes.delete(id);
           }
+
+          const alive = updateTopLength();
+          if (joinedOnce){
+            if (wasAlive && !alive){
+              deathScore.textContent = "Length: " + lastLen;
+              deathOverlay.classList.add("show");
+              deathRespawnBtn.disabled = false;
+              deathRespawnBtn.textContent = "Respawn";
+            }
+            if (!wasAlive && alive){
+              deathOverlay.classList.remove("show");
+              if(respawnSpam){ clearInterval(respawnSpam); respawnSpam=null; }
+            }
+          }
+          wasAlive = alive;
 
           updateLeaderboard();
           return;
@@ -2093,6 +2198,7 @@ const DEFAULT_UI = {
 
   chatEnable: false,
   segmentedSnakes: true,
+  snakeVariant: "classic",
   mouseEnable: false,
   disableWASD: false,
 
@@ -2131,6 +2237,7 @@ function readUiSettings(){
 
     chatEnable: !!(chatEnable && chatEnable.checked),
     segmentedSnakes: !!(segmentedSnakesEl && segmentedSnakesEl.checked),
+    snakeVariant: (snakeVariantEl && snakeVariantEl.value) ? String(snakeVariantEl.value) : "classic",
     mouseEnable: !!(mouseEnable && mouseEnable.checked),
     disableWASD: !!(disableWASD && disableWASD.checked),
 
@@ -2170,6 +2277,12 @@ function applyUiSettings(s){
 
   if (chatEnable) chatEnable.checked = !!s.chatEnable;
   if (segmentedSnakesEl) segmentedSnakesEl.checked = !!s.segmentedSnakes;
+  if (snakeVariantEl){
+    const v = (typeof s.snakeVariant === "string") ? s.snakeVariant : DEFAULT_UI.snakeVariant;
+    snakeVariantEl.value = v;
+    if (snakeVariantEl.value !== v) snakeVariantEl.value = DEFAULT_UI.snakeVariant;
+    snakeVariant = snakeVariantEl.value;
+  }
   if (mouseEnable) mouseEnable.checked = !!s.mouseEnable;
   if (disableWASD) disableWASD.checked = !!s.disableWASD;
 
@@ -2291,6 +2404,13 @@ refreshPresetSelect();
   if (chatEnable){
     chatEnable.onchange = () => setChatEnabled(chatEnable.checked);
     setChatEnabled(chatEnable.checked);
+  }
+  if (snakeVariantEl){
+    snakeVariantEl.onchange = () => {
+      snakeVariant = snakeVariantEl.value || "classic";
+      saveLastSettings();
+    };
+    snakeVariant = snakeVariantEl.value || "classic";
   }
 // ----- Popup controls -----
   toastDur.oninput = () => toastDurLabel.textContent = Number(toastDur.value).toFixed(1);
@@ -2414,6 +2534,13 @@ refreshPresetSelect();
       `;
       lbBody.appendChild(row);
     });
+  }
+
+  function updateTopLength(){
+    const me = myId ? rSnakes.get(myId) : null;
+    if (me) lastLen = Math.max(0, Math.floor(me.len||0));
+    scoreTop.textContent = "Length: " + (me ? Math.floor(me.len||0) : lastLen);
+    return !!me;
   }
 
   // ----- Rendering -----
@@ -2679,67 +2806,62 @@ function drawSnake(s, camX, camY, camZ){
     const pts = s.pts || [];
     if (!pts.length) return;
 
-    // thickness scales with mass (length)
     const L = Math.max(0, Number(s.len)||0);
     const bwIn = (typeof s.bw === "number") ? s.bw : (18 + Math.sqrt(L) * 1.10);
     const bw = Math.max(18, bwIn);
     const hr = Math.max(14, bw * 0.70);
     const innerW = Math.max(10, bw * 0.46);
-ctx.save();
-    applyWorldTransform(camX, camY, camZ);
+    const color = s.c || "#fff";
 
+    const hx0 = (typeof s.x==="number") ? s.x : pts[0][0];
+    const hy0 = (typeof s.y==="number") ? s.y : pts[0][1];
+    const tail = pts[pts.length-1];
+
+    ctx.save();
+    applyWorldTransform(camX, camY, camZ);
     ctx.lineCap = "butt";
     ctx.lineJoin = "round";
 
-    const segOn = (segmentedSnakesEl && segmentedSnakesEl.checked);
+    const mode = snakeVariant || "classic";
+    const segOn = (segmentedSnakesEl && segmentedSnakesEl.checked) || mode === "slither";
 
-    // body
-    ctx.strokeStyle = s.c || "#fff";
-    ctx.lineWidth = segOn ? (bw * 0.70) : bw;
-    // draw body from head -> tail but with "butt" cap so it never sticks past the head
-    const hx0 = (typeof s.x==="number") ? s.x : pts[0][0];
-    const hy0 = (typeof s.y==="number") ? s.y : pts[0][1];
+    let baseWidth = bw;
+    let innerAlpha = .18;
+    if (mode === "slither"){ baseWidth = bw * .74; innerAlpha = .14; }
+    if (mode === "ghost"){ baseWidth = bw * .68; innerAlpha = .10; }
+    if (mode === "armored"){ baseWidth = bw * .82; innerAlpha = .22; }
 
-    // pts are clamped server-side to stay behind the head; render uses hx0/hy0 as the true front
-
-
+    ctx.strokeStyle = color;
+    ctx.lineWidth = segOn ? baseWidth : bw;
     ctx.beginPath();
     ctx.moveTo(hx0, hy0);
     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
     ctx.stroke();
 
-    // inner depth
-    ctx.strokeStyle = segOn ? "rgba(0,0,0,.12)" : "rgba(0,0,0,.18)";
+    const innerColor = (mode === "neon") ? "rgba(10,18,26,.34)" : `rgba(0,0,0,${innerAlpha})`;
+    ctx.strokeStyle = innerColor;
     ctx.lineWidth = segOn ? Math.max(8, innerW * 0.85) : innerW;
     ctx.beginPath();
     ctx.moveTo(hx0, hy0);
     for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
     ctx.stroke();
 
-
-    // round tail cap (since body uses butt cap)
-    const tail = pts[pts.length-1];
     if (!segOn && tail){
-      ctx.fillStyle = s.c || "#fff";
+      ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(tail[0], tail[1], bw*0.5, 0, Math.PI*2);
       ctx.fill();
-
       ctx.fillStyle = "rgba(0,0,0,.16)";
       ctx.beginPath();
       ctx.arc(tail[0], tail[1], innerW*0.52, 0, Math.PI*2);
       ctx.fill();
     }
 
-    
-    // segments (optional)
     if (segOn){
-      // Fast Slither-like segments: sprite stamps with view culling + LOD (prevents FPS jitter)
-      const rSeg = bw * 0.50;
-      const spr = __segSprite(s.c || "#bfe0ff", rSeg);
-
-      const baseSpacing = Math.max(7, rSeg * 0.95);
-      // when zoomed out, increase world spacing to keep screen density similar
+      const segScale = (mode === "armored") ? 0.54 : (mode === "slither" ? 0.48 : 0.5);
+      const rSeg = bw * segScale;
+      const spr = __segSprite(color, rSeg);
+      const baseSpacing = Math.max(7, rSeg * ((mode === "armored") ? 1.08 : 0.95));
       const z = Math.max(0.35, camZ || 1);
       const spacing = baseSpacing / z;
 
@@ -2757,52 +2879,113 @@ ctx.save();
       let acc = 0;
       let px = hx0, py = hy0;
       let stamps = 0;
-
       for (let i = 1; i < n; i += step){
         const x = pts[i][0], y = pts[i][1];
-
-        // cheap view cull before any expensive drawing work
-        if (x < left || x > right || y < top || y > bottom){
-          px = x; py = y;
-          continue;
-        }
+        if (x < left || x > right || y < top || y > bottom){ px = x; py = y; continue; }
 
         const dx = x - px, dy = y - py;
-        const d = Math.sqrt(dx*dx + dy*dy);
-        acc += d;
-
+        acc += Math.sqrt(dx*dx + dy*dy);
         if (acc >= spacing){
           acc -= spacing;
           ctx.drawImage(spr, x - spr.width*0.5, y - spr.height*0.5);
           if (++stamps >= maxStamps) break;
         }
-
         px = x; py = y;
       }
     }
 
-    // head
     const hx = hx0, hy = hy0;
-    ctx.beginPath();
-    ctx.fillStyle = s.c || "#fff";
-    ctx.arc(hx, hy, hr, 0, Math.PI*2);
-    ctx.fill();
 
-    // subtle head highlight for layering
-    ctx.globalAlpha = 0.22;
-    ctx.fillStyle = "rgba(255,255,255,.9)";
+    if (mode === "ghost") ctx.globalAlpha = 0.75;
+    if (mode === "tech"){
+      const hg = ctx.createRadialGradient(hx - hr*0.26, hy - hr*0.22, hr*0.2, hx, hy, hr);
+      hg.addColorStop(0, "rgba(255,255,255,.95)");
+      hg.addColorStop(.38, color);
+      hg.addColorStop(1, "rgba(0,0,0,.55)");
+      ctx.fillStyle = hg;
+    } else {
+      ctx.fillStyle = color;
+    }
+
     ctx.beginPath();
-    ctx.arc(hx - hr*0.28, hy - hr*0.28, hr*0.55, 0, Math.PI*2);
+    ctx.arc(hx, hy, hr, 0, Math.PI*2);
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // eyes
+    if (mode === "neon" || mode === "tech"){
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = (mode === "neon") ? "rgba(130,255,235,.45)" : "rgba(120,190,255,.45)";
+      ctx.lineWidth = Math.max(2, hr * .22);
+      ctx.beginPath();
+      ctx.moveTo(hx0, hy0);
+      for (let i=3;i<pts.length;i+=3) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    if (mode === "banded" || mode === "viper" || mode === "dots"){
+      const bandStep = Math.max(16, bw * (mode === "dots" ? 1.5 : 1.1));
+      const markR = Math.max(2, bw * (mode === "dots" ? 0.16 : 0.13));
+      let acc=0, px=hx0, py=hy0;
+      for (let i=1; i<pts.length; i++){
+        const x=pts[i][0], y=pts[i][1];
+        const dx=x-px, dy=y-py;
+        acc += Math.sqrt(dx*dx+dy*dy);
+        if (acc >= bandStep){
+          acc -= bandStep;
+          if (mode === "dots"){
+            ctx.fillStyle = "rgba(255,255,255,.55)";
+            ctx.beginPath(); ctx.arc(x,y,markR,0,Math.PI*2); ctx.fill();
+          } else {
+            ctx.strokeStyle = (mode === "viper") ? "rgba(12,18,22,.42)" : "rgba(255,255,255,.26)";
+            ctx.lineWidth = Math.max(2, bw*0.16);
+            ctx.beginPath();
+            ctx.arc(x, y, Math.max(5, bw*0.34), 0, Math.PI*2);
+            ctx.stroke();
+          }
+        }
+        px=x; py=y;
+      }
+    }
+
+    if (mode === "armored"){
+      ctx.strokeStyle = "rgba(255,255,255,.22)";
+      ctx.lineWidth = Math.max(2, bw*0.12);
+      ctx.beginPath();
+      for (let i=6; i<pts.length; i+=8){
+        const p = pts[i];
+        ctx.moveTo(p[0]-bw*0.22, p[1]);
+        ctx.lineTo(p[0]+bw*0.22, p[1]);
+      }
+      ctx.stroke();
+    }
+
+    if (mode === "toon"){
+      ctx.strokeStyle = "rgba(0,0,0,.42)";
+      ctx.lineWidth = Math.max(3, bw*0.22);
+      ctx.beginPath();
+      ctx.moveTo(hx0, hy0);
+      for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+
+    if (mode === "classic" || mode === "slither" || mode === "ghost"){
+      ctx.globalAlpha = (mode === "ghost") ? 0.16 : 0.22;
+      ctx.fillStyle = "rgba(255,255,255,.9)";
+      ctx.beginPath();
+      ctx.arc(hx - hr*0.28, hy - hr*0.28, hr*0.55, 0, Math.PI*2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
     const a = s.a || 0;
     const ex = Math.cos(a), ey = Math.sin(a);
     const px = -ey, py = ex;
 
-    const eyeR = Math.max(3.2, hr*0.25);
-    const pupR = Math.max(1.6, hr*0.12);
+    let eyeR = Math.max(3.2, hr*0.25);
+    let pupR = Math.max(1.6, hr*0.12);
+    if (mode === "slither") { eyeR = Math.max(3.4, hr*0.28); pupR = Math.max(1.5, hr*0.10); }
+    if (mode === "viper") { eyeR = Math.max(3.0, hr*0.22); pupR = Math.max(2.0, hr*0.14); }
 
     const eyeF = hr*0.42;
     const eyeS = hr*0.33;
@@ -2813,13 +2996,12 @@ ctx.save();
     ctx.arc(hx + ex*eyeF - px*eyeS, hy + ey*eyeF - py*eyeS, eyeR, 0, Math.PI*2);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(0,0,0,.7)";
+    ctx.fillStyle = (mode === "viper") ? "rgba(0,0,0,.88)" : "rgba(0,0,0,.7)";
     ctx.beginPath();
     ctx.arc(hx + ex*(eyeF+hr*0.12) + px*eyeS, hy + ey*(eyeF+hr*0.12) + py*eyeS, pupR, 0, Math.PI*2);
     ctx.arc(hx + ex*(eyeF+hr*0.12) - px*eyeS, hy + ey*(eyeF+hr*0.12) - py*eyeS, pupR, 0, Math.PI*2);
     ctx.fill();
 
-    // chat bubble (when enabled)
     if (chatEnabled && s.chatUntil && performance.now() < s.chatUntil && s.chatText){
       const msg = String(s.chatText);
       const text = msg.length > 40 ? msg.slice(0,39) + "…" : msg;
@@ -2851,6 +3033,7 @@ ctx.save();
 
     ctx.restore();
   }
+
 
   function drawMinimap(camX, camY){
     if (!showMap) return;
@@ -3061,7 +3244,7 @@ ctx.save();
 const cam = { x:0, y:0, z:1 };
 
 function frame(t){
-    const dt = Math.min(0.05, (t - lastFrame) / 1000);
+    const dt = Math.max(0.001, Math.min(0.05, (t - lastFrame) / 1000));
     lastFrame = t;
     // send input (before sim tick in local mode for tight control)
     if (ws && ws.readyState === WebSocket.OPEN && joined && !isTyping()){
@@ -3210,8 +3393,10 @@ function frame(t){
     for (const s of rSnakes.values()){
       drawSnake(s, camX, camY, camZ);
     }
+    updateTopLength();
     drawMinimap(camX, camY);
 
+    updateLeaderboard();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
