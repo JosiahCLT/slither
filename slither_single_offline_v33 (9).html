@@ -1201,26 +1201,17 @@ function wsSend(obj){
           if (typeof s.headDist !== "number") s.headDist = Number(last.d) || 0;
         }
       },
-      updateTailCursor(s, dt, headSpeed){
+      updateTailCursor(s, dt){
         const want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
         if (typeof s.lengthVisual !== "number") s.lengthVisual = want;
 
-        const vis = s.lengthVisual;
-        let next = vis;
-        const growRate = Math.max(0, (headSpeed || 0) * 0.82);
-        const shrinkRate = Math.max(growRate + 40, (headSpeed || 0) * 1.85);
-
-        if (want > vis){
-          next = Math.min(want, vis + growRate * dt);
-        } else if (want < vis){
-          next = Math.max(want, vis - shrinkRate * dt);
-        }
-        s.lengthVisual = next;
+        // Continuous float follow so visual length changes are smooth (both grow + shrink).
+        const follow = 1 - Math.exp(-Math.max(0, dt) * 20);
+        s.lengthVisual += (want - s.lengthVisual) * follow;
 
         const hd = Math.max(0, Number(s.headDist) || 0);
-        const targetTail = Math.max(0, hd - next);
-        if (typeof s.tailDist !== "number") s.tailDist = targetTail;
-        else s.tailDist = Math.max(s.tailDist, targetTail);
+        // Tail position is driven directly by traveled distance offset (rope-like flow).
+        s.tailDist = Math.max(0, hd - s.lengthVisual);
       },
       pruneOldPathPoints(s){
         const path = s.path;
@@ -1752,7 +1743,7 @@ function wsSend(obj){
             s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
           this.appendHeadToPath(s, s.x, s.y);
-          this.updateTailCursor(s, dt, spd);
+          this.updateTailCursor(s, dt);
           this.pruneOldPathPoints(s);
           this.samplePathToPoints(s);
 
@@ -1781,14 +1772,13 @@ s._bb0=minx; s._bb1=maxx; s._bb2=miny; s._bb3=maxy;
 
           // boost drain + pellets
           if (boosting && s.inB){
-            const drain = (this.settings.boostDrain ?? 12);
+            const drain = Number(this.settings.boostDrain ?? 12);
             const before = s.len;
-            s.len = Math.max(minLen, s.len - drain*dt);
+            s.len = Math.max(minLen, s.len - drain * dt);
             const drained = Math.max(0, before - s.len);
-            if (drained > 0){
-              const trailDrainRate = this.massToTrailDist(drain);
-              s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(before)) - trailDrainRate * dt);
-            }
+
+            const trailDrainRate = this.massToTrailDist(drain);
+            s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(before)) - trailDrainRate * dt);
 
             s._boostMassAcc = (s._boostMassAcc || 0) + drained;
             const pelletMass = 2.6;
