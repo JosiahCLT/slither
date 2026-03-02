@@ -1195,19 +1195,27 @@ function wsSend(obj){
           return 0;
         }
       },
-      updateTailCursor(s){
+      updateTailCursor(s, dt, moved){
         const want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
         if (typeof s.lengthVisual !== "number") s.lengthVisual = want;
 
-        // keep visual length responsive but smooth; growth should not stall tail flow
-        const follow = 1 - Math.exp(-1/120 * 22);
+        // Float/time-based follow for smooth growth/shrink visuals.
+        const follow = 1 - Math.exp(-Math.max(0, dt) * 18);
         s.lengthVisual += (want - s.lengthVisual) * follow;
 
         const hd = Math.max(0, Number(s.headDist) || 0);
         const targetTail = Math.max(0, hd - s.lengthVisual);
         const prevTail = Math.max(0, Number(s.tailDist) || 0);
-        // hard monotonic guarantee: tail never goes backward
-        s.tailDist = Math.max(prevTail, targetTail);
+
+        // Tail always advances (never backward), even during rapid growth.
+        const mv = Math.max(0, Number(moved) || 0);
+        const minDelta = mv * 0.20;
+        const maxDelta = mv * 1.70 + 36 * Math.max(0, dt);
+        const desiredDelta = targetTail - prevTail;
+        let delta = Number.isFinite(desiredDelta) ? desiredDelta : minDelta;
+        delta = Math.max(minDelta, Math.min(maxDelta, delta));
+
+        s.tailDist = prevTail + delta;
       },
       pruneOldPathPoints(s){
         const path = s.path;
@@ -1738,8 +1746,8 @@ function wsSend(obj){
           if (typeof s.lengthWanted !== "number"){
             s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
-          this.appendHeadToPath(s, s.x, s.y);
-          this.updateTailCursor(s);
+          const moved = this.appendHeadToPath(s, s.x, s.y);
+          this.updateTailCursor(s, dt, moved);
           this.pruneOldPathPoints(s);
           this.samplePathToPoints(s);
 
