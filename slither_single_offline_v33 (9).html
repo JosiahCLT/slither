@@ -1201,10 +1201,26 @@ function wsSend(obj){
           if (typeof s.headDist !== "number") s.headDist = Number(last.d) || 0;
         }
       },
-      updateTailCursor(s){
+      updateTailCursor(s, dt, headSpeed){
         const want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
+        if (typeof s.lengthVisual !== "number") s.lengthVisual = want;
+
+        const vis = s.lengthVisual;
+        let next = vis;
+        const growRate = Math.max(0, (headSpeed || 0) * 0.82);
+        const shrinkRate = Math.max(growRate + 40, (headSpeed || 0) * 1.85);
+
+        if (want > vis){
+          next = Math.min(want, vis + growRate * dt);
+        } else if (want < vis){
+          next = Math.max(want, vis - shrinkRate * dt);
+        }
+        s.lengthVisual = next;
+
         const hd = Math.max(0, Number(s.headDist) || 0);
-        s.tailDist = Math.max(0, hd - want);
+        const targetTail = Math.max(0, hd - next);
+        if (typeof s.tailDist !== "number") s.tailDist = targetTail;
+        else s.tailDist = Math.max(s.tailDist, targetTail);
       },
       pruneOldPathPoints(s){
         const path = s.path;
@@ -1436,6 +1452,8 @@ function wsSend(obj){
           headDist: 0,
           tailDist: 0,
           lengthWanted: 0,
+          lengthVisual: 0,
+          lenRender: 0,
           inA: null,
           inB: false,
           aiT: 0,
@@ -1443,10 +1461,12 @@ function wsSend(obj){
           _boostFoodCd: 0
         };
         s.lengthWanted = this.snakeTrailLengthForMass(s.len);
+        s.lengthVisual = s.lengthWanted;
+        s.lenRender = s.len;
         const spacing = this.snakeSegmentSpacing();
-        const seedSteps = Math.max(2, Math.floor(s.lengthWanted / spacing));
+        const seedSteps = Math.max(2, Math.floor(s.lengthVisual / spacing));
         s.headDist = seedSteps * spacing;
-        s.tailDist = Math.max(0, s.headDist - s.lengthWanted);
+        s.tailDist = Math.max(0, s.headDist - s.lengthVisual);
         s.path = [];
         for (let i=seedSteps; i>=0; i--){
           const d = (seedSteps - i) * spacing;
@@ -1732,7 +1752,7 @@ function wsSend(obj){
             s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
           this.appendHeadToPath(s, s.x, s.y);
-          this.updateTailCursor(s);
+          this.updateTailCursor(s, dt, spd);
           this.pruneOldPathPoints(s);
           this.samplePathToPoints(s);
 
@@ -1789,10 +1809,15 @@ while (s._boostMassAcc >= pelletMass && this.foods.size < cap && spawned < spawn
             if (s._boostMassAcc) s._boostMassAcc = Math.max(0, s._boostMassAcc - 60*dt);
           }
 
-          // size scales with mass (thicker + slightly larger head)
-          s.bw = this.snakeBodyWidth(s.len);
+          // smooth visual mass to avoid jittery width pops during boost/eat bursts
+          if (typeof s.lenRender !== "number") s.lenRender = s.len;
+          const lenFollow = 1 - Math.exp(-dt * 12);
+          s.lenRender += (s.len - s.lenRender) * lenFollow;
+
+          // size scales with (smoothed) visual mass
+          s.bw = this.snakeBodyWidth(s.lenRender);
           s.br = s.bw * 0.5;
-          s.hr = this.snakeHeadRadius(s.len);
+          s.hr = this.snakeHeadRadius(s.lenRender);
         }
         // eating food (reliable multi-eat + swept checks)
         for (const s of this.snakes.values()){
@@ -1844,10 +1869,11 @@ const take = (hits.length > maxEat) ? hits.slice(0, maxEat) : hits;
             s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(s.len)) + this.massToTrailDist(gain));
           }
 
-          // refresh size immediately so eat radius stays correct even while growing
-          s.bw = this.snakeBodyWidth(s.len);
+          // keep eat radius responsive, but render mass smoothing handles visual width in movement step
+          if (typeof s.lenRender !== "number") s.lenRender = s.len;
+          s.bw = this.snakeBodyWidth(s.lenRender);
           s.br = s.bw * 0.5;
-          s.hr = this.snakeHeadRadius(s.len);
+          s.hr = this.snakeHeadRadius(s.lenRender);
         }
 
 
