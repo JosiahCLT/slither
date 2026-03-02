@@ -1174,6 +1174,88 @@ function wsSend(obj){
         const bw = this.snakeBodyWidth(len);
         return Math.max(14, bw * 0.65);
       },
+      snakeSegmentSpacing(){ return 10; },
+      snakeMinTrailLength(){ return 140; },
+      massToTrailDist(mass){
+        const m = Math.max(0, Number(mass) || 0);
+        return m * 4.2;
+      },
+      snakeTrailLengthForMass(len){
+        return this.snakeMinTrailLength() + this.massToTrailDist(len);
+      },
+      appendHeadToPath(s, x, y){
+        const path = s.path || (s.path = [[x, y]]);
+        if (!path.length){
+          path.push([x, y]);
+          s.pathLen = 0;
+          return;
+        }
+        const last = path[path.length - 1];
+        const dx = x - last[0], dy = y - last[1];
+        const d = Math.hypot(dx, dy);
+        if (d > 1e-6){
+          path.push([x, y]);
+          s.pathLen = (s.pathLen || 0) + d;
+        } else {
+          last[0] = x; last[1] = y;
+        }
+      },
+      trimPathToWanted(s){
+        const path = s.path;
+        if (!path || path.length < 2) return;
+        let want = Math.max(this.snakeMinTrailLength(), Number(s.lengthWanted) || 0);
+        let total = Math.max(0, Number(s.pathLen) || 0);
+
+        while (path.length > 1 && total > want){
+          const p0 = path[0], p1 = path[1];
+          const dx = p1[0] - p0[0], dy = p1[1] - p0[1];
+          const seg = Math.hypot(dx, dy);
+          if (seg < 1e-6){ path.shift(); continue; }
+          const over = total - want;
+          if (over >= seg){
+            total -= seg;
+            path.shift();
+          } else {
+            const t = over / seg;
+            p0[0] += dx * t;
+            p0[1] += dy * t;
+            total = want;
+            break;
+          }
+        }
+        s.pathLen = total;
+      },
+      samplePathToPoints(s){
+        const path = s.path;
+        if (!path || !path.length){ s.pts = [[s.x, s.y]]; return; }
+
+        const spacing = this.snakeSegmentSpacing();
+        const maxPts = 1400;
+        const out = [];
+
+        const head = path[path.length - 1];
+        out.push([head[0], head[1]]);
+
+        let nextD = spacing;
+        let walked = 0;
+
+        for (let i = path.length - 1; i > 0 && out.length < maxPts; i--){
+          const ax = path[i][0], ay = path[i][1];
+          const bx = path[i-1][0], by = path[i-1][1];
+          const dx = bx - ax, dy = by - ay;
+          const seg = Math.hypot(dx, dy);
+          if (seg < 1e-6) continue;
+
+          while (walked + seg >= nextD && out.length < maxPts){
+            const t = (nextD - walked) / seg;
+            out.push([ax + dx * t, ay + dy * t]);
+            nextD += spacing;
+          }
+          walked += seg;
+        }
+
+        s.pts = out;
+      },
 
       ensureGlows(addList, rmList){
         const want = Math.max(0, Math.round((this.settings.glowCount ?? 10)));
@@ -1352,22 +1434,28 @@ function wsSend(obj){
           c: this.randColor(),
           len: bot ? 55 : 48,
           pts: [],
+          path: [],
+          pathLen: 0,
+          lengthWanted: 0,
           inA: null,
           inB: false,
           aiT: 0,
           aiA: this.rand(-Math.PI, Math.PI),
           _boostFoodCd: 0
         };
-        // seed body points behind head (include head at pts[0])
-const want0 = Math.max(26, Math.min(1400, Math.floor(22 + (Math.max(0, (s.len||0)) * 1.20))));
-const seedSpacing = 3.8 + Math.min(14, Math.sqrt(Math.max(0, (s.len||0))) * 0.18);
-s.pts = [[s.x, s.y]];
-for(let i=1;i<want0;i++){
-  s.pts.push([s.x - Math.cos(s.a)*i*seedSpacing, s.y - Math.sin(s.a)*i*seedSpacing]);
-}
-s._trailRem = 0;
-s.lenv = s.len;
-this.snakes.set(id, s);
+        s.lengthWanted = this.snakeTrailLengthForMass(s.len);
+        s.path = [[s.x, s.y]];
+        s.pathLen = 0;
+        const spacing = this.snakeSegmentSpacing();
+        const seedSteps = Math.max(2, Math.floor(s.lengthWanted / spacing));
+        for (let i=1; i<=seedSteps; i++){
+          const nx = s.x - Math.cos(s.a) * i * spacing;
+          const ny = s.y - Math.sin(s.a) * i * spacing;
+          s.path.unshift([nx, ny]);
+          s.pathLen += spacing;
+        }
+        this.samplePathToPoints(s);
+        this.snakes.set(id, s);
         return s;
       },
       ensureBots(){
@@ -1638,49 +1726,12 @@ this.snakes.set(id, s);
           s.y += Math.sin(s.a) * spd * dt;
           this.clampWorld(s);
 
-          // length growth should appear at the tail (Slither-like): smooth "effective length"
-          if (s.lenv == null) s.lenv = s.len;
-          const lenK = 1 - Math.pow(0.06, dt); // easing factor
-          s.lenv += (s.len - s.lenv) * lenK;
-
-          // body trail (head point is continuous -> removes jitter; adaptive sampling for perf)
-          const spacing = 3.8 + Math.min(14, Math.sqrt(Math.max(0, s.lenv||0)) * 0.18);
-
-          if (!s.pts || !s.pts.length){
-            s.pts = [[s.x, s.y]];
-            s._trailRem = 0;
-          } else {
-            // keep pts[0] locked to the true head position every tick (smooth)
-            s.pts[0][0] = s.x;
-            s.pts[0][1] = s.y;
-
-            // insert additional trail points behind the head based on distance traveled
-            const ox = (typeof s.px === "number") ? s.px : s.x;
-            const oy = (typeof s.py === "number") ? s.py : s.y;
-            const dx = s.x - ox, dy = s.y - oy;
-            let dist = Math.hypot(dx, dy);
-
-            if (dist > 0.0001){
-              const ux = dx / dist, uy = dy / dist;
-              let rem = (typeof s._trailRem === "number") ? s._trailRem : 0;
-              let sx = ox, sy = oy;
-
-              // walk along the movement segment and add points every `spacing`
-              while (rem + dist >= spacing){
-                const step = spacing - rem;
-                sx += ux * step;
-                sy += uy * step;
-                s.pts.splice(1, 0, [sx, sy]); // newest behind head
-                dist -= step;
-                rem = 0;
-              }
-              rem += dist;
-              s._trailRem = rem;
-            }
+          if (typeof s.lengthWanted !== "number"){
+            s.lengthWanted = this.snakeTrailLengthForMass(s.len);
           }
-
-          const want = Math.max(26, Math.min(1400, Math.floor(22 + (Math.max(0, (s.lenv||0))) * 1.20)));
-          if (s.pts.length > want) s.pts.length = want;
+          this.appendHeadToPath(s, s.x, s.y);
+          this.trimPathToWanted(s);
+          this.samplePathToPoints(s);
 
 // ensure no body point sits in front of the head along current heading
 const fxh = Math.cos(s.a), fyh = Math.sin(s.a);
@@ -1711,6 +1762,9 @@ s._bb0=minx; s._bb1=maxx; s._bb2=miny; s._bb3=maxy;
             const before = s.len;
             s.len = Math.max(minLen, s.len - drain*dt);
             const drained = Math.max(0, before - s.len);
+            if (drained > 0){
+              s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(before)) - this.massToTrailDist(drained));
+            }
 
             s._boostMassAcc = (s._boostMassAcc || 0) + drained;
             const pelletMass = 2.6;
@@ -1781,7 +1835,9 @@ const take = (hits.length > maxEat) ? hits.slice(0, maxEat) : hits;
             const __f = this.removeFood(id);
             if (__f && this.__direct && this._eatEv) this._eatEv.push({ x: __f.x, y: __f.y, r: (__f.r||6), c: (__f.c||"rgba(106,167,255,.95)"), t: __f.t||"n", eaterId: s.id });
             eat.push(id);
-            s.len += this.foodValue(ft);
+            const gain = this.foodValue(ft);
+            s.len += gain;
+            s.lengthWanted = Math.max(this.snakeMinTrailLength(), (s.lengthWanted || this.snakeTrailLengthForMass(s.len)) + this.massToTrailDist(gain));
           }
 
           // refresh size immediately so eat radius stays correct even while growing
